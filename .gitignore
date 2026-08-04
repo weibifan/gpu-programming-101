@@ -1,0 +1,29 @@
+# 构建产物（nvcc/MSVC）
+*.exe
+*.obj
+*.o
+*.dll
+*.lib
+*.exp
+*.pdb
+*.cubin
+*.ptx
+*.fatbin
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE / 系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# 数据文件（大体积/生成物）
+data/**/*.bin
+data/**/*.pt
