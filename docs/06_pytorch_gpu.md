@@ -35,6 +35,8 @@
 | 中间层 | CuPy | 像写 NumPy 一样写 GPU 数组 | ❌ 基本不用 | 把 NumPy 科学计算加速 |
 | 最上层 | PyTorch / TF | 只管模型和数据，GPU 全自动 | ❌ 不用 | 深度学习全流程 |
 
+> ⚠️ 注意：这三个层次是**三个相互独立的库**，不是包含关系。PyTorch 内部用的是 ATen + cuBLAS/cuDNN，**不包含** PyCUDA 或 CuPy；PyCUDA 和 CuPy 之间也互不依赖。它们只是"抽象程度不同"的平级选择——你可以只装一个用，也可以同时装。
+
 > 本仓库主线：**先用 CUDA C 学原理（docs/02~04），再用 PyTorch 做应用（本篇）**。PyCUDA/Numba 是"想在自己代码里手写内核但不想用 C 编译"时的选择，了解即可。
 
 ### 1.3 中间层示例：Numpy（CPU）vs CuPy（GPU）
@@ -134,6 +136,29 @@ for x, y in dataloader:
 
 > 认知要点：**PyTorch 不是"比 CUDA 快"，而是"把 CUDA 封装到你感觉不到"**。出了性能问题，04_performance.md 的 memory-bound/带宽判断，能帮你定位是"算法不行"还是"库已经尽力了"。
 
+### 2.3 torch 是 Python 前端，ATen 是 C++/CUDA 后端
+
+PyTorch 是分层的：`import torch` 得到的只是薄薄一层**前端**，真正的计算都在底层的 C++/CUDA 引擎 **ATen**（A Tensor Library）里：
+
+```
+你写的 Python 代码
+      │  pybind11 绑定（C++ ↔ Python 的桥，几乎零开销）
+      ▼
+torch 包（Python 前端）  —— 把 Python 调用翻译给 C++
+      ▼
+ATen（C++/CUDA 引擎）    —— 实现 Tensor 类、调度数千个算子
+      ▼
+cuBLAS / cuDNN / 自写 kernel —— 真正的 GPU 计算
+```
+
+| 层次 | 是什么 | 干什么 |
+|---|---|---|
+| torch（Python 前端） | 你 `import torch` 导入的包 | 把 Python 的调用翻译给 C++，本身基本不干活 |
+| ATen（C++/CUDA 后端） | PyTorch 的核心 C++ 张量库 | `torch.Tensor` 的真实实现、算子的入口，性能核心 |
+| cuBLAS / cuDNN 等 | NVIDIA 的底层库 | 被 ATen 再往下调用，最终在 GPU 上启动内核 |
+
+> 对 GPU 编程学习者的意义：这层分层解释了"为什么 PyTorch 用起来快"——Python 只是薄薄一层壳，热点计算全在 C++/CUDA 里，没有解释器拖慢。`x @ x.T` 最终就是 ATen 调 cuBLAS，启动一个你在 04_performance.md 里学过的那种矩阵乘 kernel。
+
 ---
 
 ## 3. 设备与数据流动：三大关键操作
@@ -149,6 +174,8 @@ for x, y in dataloader:
 ### 3.1 Tensor 的设备属性
 
 PyTorch 的数据结构叫 **Tensor**，每个 Tensor 都有 `.device` 属性，决定它住在 CPU 内存还是显存：
+
+> 类比 MFC 的 `CString`：`CString` 是封装"字符缓冲区 + 操作方法"的 C++ 工具类；`Tensor` 同样是一个封装"多维数值数组 + 设备 + 运算方法"的类——只是它管的不是字符串，而是可住在 CPU/显存上的数值数据（和 CString 一样，都是"具体工具类"，不是 Java `Object` 那样的"万物基类"）。
 
 ```python
 x = torch.randn(1000, 1000)      # 默认在 CPU
