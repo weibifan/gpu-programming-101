@@ -5,7 +5,7 @@
 # 运行（需 GPU 机器，如远端 Win10）：
 #   python 05_torch_backends.py
 #
-# 对应文档：docs/02_cuda_basics.md §7.2 / §7.3
+# 对应文档：docs/02_cuda_basics.md §9.1 / §9.2
 # =====================================================================
 import torch
 

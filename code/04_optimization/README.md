@@ -40,4 +40,4 @@ ncu --metrics sm__throughput.avg.pct_of_peak_sustained_elapsed,gpu__compute_memo
 * **`__syncthreads()` 位置**：拷入 → 同步 → 计算 → 同步，漏一个结果就可能错。
 * 手写 SGEMM **永远跑不过 cuBLAS**（cuBLAS 还有 Tensor Core 等大招，见 `code/08_cuda_libs/01_cublas_sgemm.cu`），手写价值在于看懂每一招为什么有效。
 
-对应文档：`docs/03_memory.md` §4、`docs/04_performance.md` §1~§6。
+对应文档：`docs/03_memory.md` §3、`docs/04_performance.md` §1~§6。

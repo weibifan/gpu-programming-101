@@ -10,7 +10,7 @@
 
 ### 1.1 回顾：GPU 靠"换人"隐藏延迟
 
-02_cuda_basics.md §2.5 讲过，GPU 的线程等数据时（全局内存 ~200-400 周期），调度器**立刻换下一个 warp 去算**——这叫延迟隐藏。它的前提是：**SM 上得有足够多待命的 warp**。驻留的 warp 越多，越能填满这段等待时间。
+02_cuda_basics.md §3.2 讲过，GPU 的线程等数据时（全局内存 ~200-400 周期），调度器**立刻换下一个 warp 去算**——这叫延迟隐藏。它的前提是：**SM 上得有足够多待命的 warp**。驻留的 warp 越多，越能填满这段等待时间。
 
 **占用率（occupancy）** = 实际驻留在 SM 上的 warp 数 ÷ SM 能容纳的最大 warp 数。
 
@@ -45,7 +45,7 @@ SM 能驻留多少 warp，受四个资源限制，谁先到顶谁就是瓶颈（
 实际驻留 = min(8, 32, 8, 12) = 8 个 block = 2048 线程 = 100% occupancy
 ```
 
-> ⚠️ 关键结论：**每线程用太多寄存器、或每 block 用太多共享内存，都会"堵死"驻留数**。这就是 03_memory.md §2/§4 提到的权衡：寄存器/共享内存给得越多，单线程越"舒服"，但能同时干活的人越少。
+> ⚠️ 关键结论：**每线程用太多寄存器、或每 block 用太多共享内存，都会"堵死"驻留数**。这就是 03_memory.md §2/§3 提到的权衡：寄存器/共享内存给得越多，单线程越"舒服"，但能同时干活的人越少。
 
 ### 1.3 占用率与 block 大小的关系
 
@@ -161,7 +161,7 @@ __global__ void sgemm_naive(const float* A, const float* B, float* C,
   例：BLOCK=16 → 全局读减少 16 倍；BLOCK=32 → 减少 32 倍
 ```
 
-**这是 03_memory.md §4.2 的落地实现**，代码在 `code/04_optimization/`（`sgemm_naive.cu → sgemm_shared.cu`）。
+**这是 03_memory.md §3.2 的落地实现**，代码在 `code/04_optimization/`（`sgemm_naive.cu → sgemm_shared.cu`）。
 
 ### 3.3 优化第二步：register tiling —— 每个线程算多个输出
 
@@ -191,7 +191,7 @@ __global__ void sgemm_naive(const float* A, const float* B, float* C,
 
 ### 4.1 bank conflict：共享内存 tile 的行长
 
-03_memory.md §4.4 说过，共享内存一次一个 warp 只能访问 32 个不同的 bank。tiling 后，一个 warp 的 32 个线程往往同时读 `As[threadIdx.y][k]`（同一行的不同列）——**行下标相同 → 列地址连续 → bank 恰好错开，通常没事**。
+03_memory.md §3.4 说过，共享内存一次一个 warp 只能访问 32 个不同的 bank。tiling 后，一个 warp 的 32 个线程往往同时读 `As[threadIdx.y][k]`（同一行的不同列）——**行下标相同 → 列地址连续 → bank 恰好错开，通常没事**。
 
 真正要注意的是**行长必须是 32 的倍数时会撞 bank**：
 
@@ -221,7 +221,7 @@ __shared__ float As[32][32 + 1];   // 行长 33，非 32 倍数，天然错开 b
 
 | 招数 | 解决的问题 | 对应本篇 |
 |---|---|---|
-| **合并访问** | 带宽浪费 | 03_memory.md §8 |
+| **合并访问** | 带宽浪费 | 03_memory.md §5 |
 | **共享内存复用（tiling）** | 全局内存读太多次 | §3.2 |
 | **寄存器复用（register tiling）** | 共享内存带宽也用满 | §3.3 |
 | **占用率调优** | 延迟藏不住 | §1 |

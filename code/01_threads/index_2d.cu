@@ -4,7 +4,7 @@
 // 展示如何从 blockIdx.y/blockDim.y/threadIdx.y 解析出"行"，
 // 再把 (row,col) 压平为行主序一维下标。
 //
-// 核心对应（docs/02_cuda_basics.md §5.2）：
+// 核心对应（docs/02_cuda_basics.md §6.4）：
 //   col = blockIdx.x*blockDim.x + threadIdx.x   （列，最快）
 //   row = blockIdx.y*blockDim.y + threadIdx.y   （行）
 //   idx = row * width + col                     （行主序压平）

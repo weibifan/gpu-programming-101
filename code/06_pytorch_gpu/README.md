@@ -32,5 +32,5 @@ python ex21_torch_compile.py  # 首次编译约几十秒
 ## 要点回顾
 
 * `.to('cuda')` 走 PCIe，慢 → 一次多传；训练循环里少把结果搬回 CPU。
-* PyTorch 内部数千个写好的 CUDA kernel 在替你干活（矩阵乘→cuBLAS、卷积→cuDNN、注意力→FlashAttention、随机→cuRAND），底层原理见 `docs/02_cuda_basics.md` §7.2~§7.3 和 `code/08_cuda_libs/`。
+* PyTorch 内部数千个写好的 CUDA kernel 在替你干活（矩阵乘→cuBLAS、卷积→cuDNN、注意力→FlashAttention、随机→cuRAND），底层原理见 `docs/02_cuda_basics.md` §9.1~§9.2 和 `code/08_cuda_libs/`。
 * AMP 与量化都是"省字节 = 省带宽"（`docs/04_performance.md` §2 的 memory-bound 直觉）；`torch.compile` 是"算子融合"的自动化版。

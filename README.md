@@ -32,7 +32,7 @@ gpu-programming-101/
 │   ├── 04_performance.md      # occupancy、tiling、Nsight 分析
 │   ├── 05_llm_acceleration.md # LLM 加速专题
 │   ├── 06_pytorch_gpu.md      # PyTorch GPU：Python 驱动 GPU + 提速三板斧
-│   └── 07_triton.md           # Triton：用 Python 写高性能内核
+│   └── 07_dsl_kernels.md      # 用 Python 写高性能内核：Triton 与 TileLang（08/09 已并入）
 ├── code/
 │   ├── 00_hello/              # 第一个 CUDA 程序 vector_add
 │   ├── 01_threads/            # 线程模型

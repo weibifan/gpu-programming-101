@@ -7,7 +7,7 @@
 // 运行：
 //   .\01_cublas_sgemm.exe
 //
-// 核心知识点（docs/02_cuda_basics.md §7.2）：
+// 核心知识点（docs/02_cuda_basics.md §9.1）：
 //   1. cuBLAS 按"列主序"（Fortran 风格）解释矩阵，与 C 的行主序相反
 //   2. 因此这里显式用列主序布局（lda/ldb/ldc = 每列的元素数），避免转置混淆
 //   3. 本程序自带 CPU 参考实现，运行时会自动对比，输出 PASS/FAIL

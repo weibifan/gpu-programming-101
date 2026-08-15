@@ -9,7 +9,7 @@
 //   nvcc vector_add.cu -o vector_add
 //   ./vector_add [N]          # 可选指定元素个数，默认 1<<20 = 1048576
 //
-// 对应文档：docs/02_cuda_basics.md §4.2 / §5.1（kernel、host/device、<<<>>>）
+// 对应文档：docs/02_cuda_basics.md §5.2 / §6.1（kernel、host/device、<<<>>>）
 // =====================================================================
 
 #include <stdio.h>

@@ -6,7 +6,7 @@
 //   nvcc matrix_transpose.cu -o matrix_transpose -arch=sm_61
 //   .\matrix_transpose.exe [N]      # 可选矩阵边长，默认 2048
 //
-// 对应文档：docs/03_memory.md §9（矩阵转置的合并访问陷阱）。
+// 对应文档：docs/03_memory.md §6（矩阵转置的合并访问陷阱）。
 //
 // 结论：
 //   写法 A(naive)  ：读 in 合并、写 out 不合并（out 下标跨行）-> 慢
@@ -44,7 +44,7 @@ __global__ void transpose_naive(const float* in, float* out, int N) {
 // 1) 连续读 in 的一小块（合并）-> 存进共享内存 tile
 // 2) __syncthreads()
 // 3) 从 tile 按转置后的顺序连续写 out（合并）
-// tile 行长 TILE+1：+1 是 padding，防 bank conflict（docs/03_memory.md §4.4）
+// tile 行长 TILE+1：+1 是 padding，防 bank conflict（docs/03_memory.md §3.4）
 __global__ void transpose_shared(const float* in, float* out, int N) {
     __shared__ float tile[TILE][TILE + 1];
 

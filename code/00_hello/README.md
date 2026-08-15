@@ -33,7 +33,7 @@ nvcc vector_add.cu -o vector_add.exe
 CPU 内存准备数据 → cudaMemcpy(→显存) → vec_add<<<blocks, threads>>> → cudaMemcpy(←显存) → 比对校验
 ```
 
-对应文档：`docs/02_cuda_basics.md` §4.2 / §5.1。
+对应文档：`docs/02_cuda_basics.md` §5.2 / §6.1。
 
 ## 核心一行：全局线程编号
 

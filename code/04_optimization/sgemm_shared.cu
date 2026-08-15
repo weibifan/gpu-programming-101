@@ -8,7 +8,7 @@
 //
 // 对应文档：docs/04_performance.md §3.2 + §4（bank conflict / __syncthreads）
 //
-// 思路（docs/03_memory.md §4.2）：
+// 思路（docs/03_memory.md §3.2）：
 //   每个 block 负责输出 C 的一个 TILE x TILE 小块：
 //   1. 循环 K/TILE 次：把 A 的 TILE 小块拷进 As、B 的拷进 Bs（合并访问）
 //   2. __syncthreads()  ->  3. 块内线程从 As/Bs 算累加（读共享内存，快）

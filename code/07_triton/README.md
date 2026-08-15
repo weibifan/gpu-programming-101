@@ -1,6 +1,6 @@
 # 07_triton — 用 Triton 写高性能内核（M5 之后）
 
-目标：把 `docs/04_performance.md` 的 tiling、`docs/05_llm_acceleration.md` 的 FlashAttention，用 **Triton**（Python 语法）各写一遍，理解 kernel 编写思路。语法与逐行讲解见 **`docs/07_triton.md`**。
+目标：把 `docs/04_performance.md` 的 tiling、`docs/05_llm_acceleration.md` 的 FlashAttention，用 **Triton**（Python 语法）各写一遍，理解 kernel 编写思路。语法与逐行讲解见 **`docs/07_dsl_kernels.md`**。
 
 | 文件 | 演示内容 | 对应概念 |
 |---|---|---|

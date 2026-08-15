@@ -1,6 +1,6 @@
 # 08_cuda_libs — CUDA 类库案例
 
-配套文档：`docs/02_cuda_basics.md` §7.2（四大基础类库）、§7.3（与 PyTorch 的关系）。
+配套文档：`docs/02_cuda_basics.md` §9.1（四大基础类库）、§9.2（与 PyTorch 的关系）。
 
 | 文件 | 类库 | 演示内容 |
 |---|---|---|

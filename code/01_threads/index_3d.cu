@@ -4,7 +4,7 @@
 // 每个线程从 blockIdx/threadIdx 的 .x/.y/.z 解出 (x,y,z) 坐标，
 // 再压平为一维下标（约定：x 最快变化）。
 //
-// 核心对应（docs/02_cuda_basics.md §5.2）：
+// 核心对应（docs/02_cuda_basics.md §6.4）：
 //   x = blockIdx.x*blockDim.x + threadIdx.x
 //   y = blockIdx.y*blockDim.y + threadIdx.y
 //   z = blockIdx.z*blockDim.z + threadIdx.z

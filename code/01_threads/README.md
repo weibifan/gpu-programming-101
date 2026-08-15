@@ -49,4 +49,4 @@ chcp 65001
 .\index_1d.exe
 ```
 
-对应文档：`docs/02_cuda_basics.md` §5.1 / §5.2。
+对应文档：`docs/02_cuda_basics.md` §6.1 / §6.4。

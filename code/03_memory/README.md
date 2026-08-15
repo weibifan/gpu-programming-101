@@ -27,6 +27,6 @@ cmd /c "\"...\vcvars64.bat\" && nvcc matrix_transpose.cu -o matrix_transpose.exe
 
 * 全局内存按 **128 字节事务** 搬运，一个 warp 的 32 个线程尽量访问**连续地址**才能合并成最少事务。
 * 转置里 naive 版"读写总有一头不合并"，**用共享内存转一道**就能两头都合并——这是所有高性能 kernel 的通用套路。
-* 共享内存的 tile 行长建议 `TILE+1`（padding），避免 32 的倍数造成 bank conflict（详见 `docs/03_memory.md` §4.4 / §9）。
+* 共享内存的 tile 行长建议 `TILE+1`（padding），避免 32 的倍数造成 bank conflict（详见 `docs/03_memory.md` §3.4 / §6）。
 
-对应文档：`docs/03_memory.md` §4、§8、§9。
+对应文档：`docs/03_memory.md` §3、§5、§6。

@@ -2,7 +2,7 @@
 // 01_threads / index_1d.cu
 // 一维网格/线程块：理解全局索引计算与"防越界"边界。
 //
-// 核心公式（docs/02_cuda_basics.md §5.2）：
+// 核心公式（docs/02_cuda_basics.md §6.4）：
 //     全局编号 = blockIdx.x * blockDim.x + threadIdx.x
 //
 // 本例子 N=510 故意取 128 的非整数倍（4 blocks×128 = 512 线程），
