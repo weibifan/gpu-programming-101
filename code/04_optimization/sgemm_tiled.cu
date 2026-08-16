@@ -7,7 +7,7 @@
 //   nvcc sgemm_tiled.cu -o sgemm_tiled -arch=sm_61
 //   .\sgemm_tiled.exe [M] [N] [K]    # 可选边长，默认 1024
 //
-// 对应文档：docs/04_performance.md §3.3（register tiling）
+// 对应文档：docs/03_cuda_advanced.md §10.3（register tiling）
 //
 // 思路：shared 版每线程只算 1 个输出，读写共享内存也有开销。
 //       这里让每个线程算 4x4 = 16 个输出：从 As/Bs 读一个元素，可参与多次累加

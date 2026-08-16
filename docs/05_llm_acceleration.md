@@ -1,6 +1,6 @@
 # 05 LLM 加速专题：Attention、量化、KV Cache 与推理引擎
 
-> 对应里程碑 M5～M6。前面的笔记都在讲"一块 GPU 怎么算得快"；本篇把镜头拉远：**跑一个大语言模型（LLM），瓶颈在哪？** 你会发现：LLM 推理慢，恰恰不是"算得慢"，而是"**数据搬得慢**"。学过 04_performance.md 的 memory-bound / compute-bound 之后，你会看明白 FlashAttention、量化、KV cache、vLLM 这些"花活"，本质都在做同一件事——**省显存、省带宽、把内存墙捅破**。
+> 对应里程碑 M5～M6。前面的笔记都在讲"一块 GPU 怎么算得快"；本篇把镜头拉远：**跑一个大语言模型（LLM），瓶颈在哪？** 你会发现：LLM 推理慢，恰恰不是"算得慢"，而是"**数据搬得慢**"。学过 03_cuda_advanced.md 的 memory-bound / compute-bound 之后，你会看明白 FlashAttention、量化、KV cache、vLLM 这些"花活"，本质都在做同一件事——**省显存、省带宽、把内存墙捅破**。
 
 **阅读路线**：先搞清 LLM 推理为什么"卡在内存上"（§1），再看三个核心优化：KV cache（§2）、FlashAttention（§3）、量化（§4），最后落到推理引擎 llama.cpp / vLLM / TensorRT（§5～§7）。读完你应能解释：为什么解码阶段快不起来？FlashAttention 到底省了什么？int4 量化为什么能提 4 倍速？vLLM 凭什么能服务很多用户？
 
@@ -189,7 +189,7 @@ python convert_nanochat_to_gguf.py --src /path/to/checkpoint --out model.gguf   
 算术强度 = 14 GFLOP / 14 GB ≈ 1 FLOP/byte  ← 非常低！
 ```
 
-对比 04_performance.md 的结论：算力 8.9 TFLOPS、带宽 320 GB/s 的 GTX 1080，**喂满算力需要 8.9T/320G ≈ 27 FLOP/byte**。而 7B 解码只有 1 FLOP/byte——
+对比 03_cuda_advanced.md 的结论：算力 8.9 TFLOPS、带宽 320 GB/s 的 GTX 1080，**喂满算力需要 8.9T/320G ≈ 27 FLOP/byte**。而 7B 解码只有 1 FLOP/byte——
 
 ```
 搬 14 GB 数据所需时间 = 14 GB / 320 GB/s ≈ 44 ms
@@ -282,9 +282,9 @@ O = P @ V            # 结果 [T, d]
 1. `S` 和 `P` 都要**写回全局内存再读回来**，带宽浪费巨大
 2. 显存里**放不下**长序列的 S 矩阵，只能退化成小 batch
 
-### 3.2 FlashAttention 的思路：04 篇的 tiling 换了个马甲
+### 3.2 FlashAttention 的思路：03 篇的 tiling 换了个马甲
 
-> 04_performance.md §3.2 我们刚学过：**把数据分块（tile）搬进共享内存，不写回全局内存，就地算完**。FlashAttention 就是把这个套路用在 attention 上——所以它叫 **IO-aware attention（感知输入输出的注意力）**。
+> 03_cuda_advanced.md §10.2 我们刚学过：**把数据分块（tile）搬进共享内存，不写回全局内存，就地算完**。FlashAttention 就是把这个套路用在 attention 上——所以它叫 **IO-aware attention（感知输入输出的注意力）**。
 
 ```
 1. 把 Q、K、V 分块，一块块搬进共享内存/寄存器
@@ -296,7 +296,7 @@ O = P @ V            # 结果 [T, d]
 效果：全局内存读写从 O(T²) 降到 O(T) → prefill 速度提升 2～4 倍
 ```
 
-**关键点**：FlashAttention 不是改变数学，是**改变数据流动的位置**——中间量不再经过慢速的全局内存。这正是 04 篇"内存感知优化"的极致版。
+**关键点**：FlashAttention 不是改变数学，是**改变数据流动的位置**——中间量不再经过慢速的全局内存。这正是 03 篇"内存感知优化"的极致版。
 
 ### 3.3 三代演进
 
@@ -323,7 +323,7 @@ O = F.scaled_dot_product_attention(Q, K, V)
 # 写法 3：显式调 FlashAttention（fa2/fa3 库，M6 在 A100/4090D 上实测）
 ```
 
-> 2022 年手写 attention（旧仓库 `ex31` 的写法）→ 2026 年 `F.scaled_dot_product_attention` 一行搞定且自动加速，是 PyTorch 生态最大的变化之一（详见 06_pytorch_gpu.md）。
+> 2022 年手写 attention（旧仓库 `ex31` 的写法）→ 2026 年 `F.scaled_dot_product_attention` 一行搞定且自动加速，是 PyTorch 生态最大的变化之一（详见 04_pytorch_gpu.md）。
 
 ---
 
@@ -331,7 +331,7 @@ O = F.scaled_dot_product_attention(Q, K, V)
 
 ### 4.1 为什么量化对 LLM 特别有效
 
-04 篇 §2 说 memory-bound 的内核优化重点就是**减字节数**。LLM 解码正好是 memory-bound——把每个权重从 FP16（2 字节）压到 INT4（0.5 字节），**搬运量直接省 4 倍**，解码速度理论上接近 4 倍。同时显存占用也省 4 倍，模型"装得下"。
+03 篇 §9 说 memory-bound 的内核优化重点就是**减字节数**。LLM 解码正好是 memory-bound——把每个权重从 FP16（2 字节）压到 INT4（0.5 字节），**搬运量直接省 4 倍**，解码速度理论上接近 4 倍。同时显存占用也省 4 倍，模型"装得下"。
 
 ### 4.2 精度与代价
 
@@ -448,7 +448,7 @@ decode 阶段算力闲置（§1.4），但一个用户独占整块 GPU 显然浪
 |---|---|---|
 | llama.cpp | 单机轻量，CPU/小显存 | 个人本地、8G 卡跑 7B int4、教学 |
 | vLLM | 服务多用户、高吞吐 | 线上 API、大卡集群、prefill/decode 分离 |
-| Triton（本仓库 06_triton/） | 自己写高性能 kernel | 学习 SGEMM/attention 内核思路 |
+| Triton（本仓库 06_dsl_kernels/） | 自己写高性能 kernel | 学习 SGEMM/attention 内核思路 |
 
 ### 6.4 模型侧的"省"：GQA / MQA
 
@@ -462,13 +462,13 @@ decode 阶段算力闲置（§1.4），但一个用户独占整块 GPU 显然浪
 
 ## 7. 推理引擎之三：TensorRT —— NVIDIA 的"专属加速包"
 
-> 前面两节（§5～§6）讲的是开源推理引擎（llama.cpp / vLLM）。本节补上 NVIDIA 自家闭源生态的重器 **TensorRT**。它和前面讲过的概念高度呼应：**层融合 = 06 篇 §5 torch.compile 的算子融合、精度优化 = §4 的量化、离线编译 = 02 篇 §7.6 的 AOT**——看懂前面的内容，TensorRT 就没有新东西。
+> 前面两节（§5～§6）讲的是开源推理引擎（llama.cpp / vLLM）。本节补上 NVIDIA 自家闭源生态的重器 **TensorRT**。它和前面讲过的概念高度呼应：**层融合 = 04 篇 §5 torch.compile 的算子融合、精度优化 = §4 的量化、离线编译 = 02 篇 §7.4 的 AOT**——看懂前面的内容，TensorRT 就没有新东西。
 
 ### 7.1 它是什么：不是库，是"专属编译器"
 
 **TensorRT** 是 NVIDIA 的**推理专用优化器 + 运行时**（不做训练）。它不是"一堆函数库"，而更像一个**编译器**：把你训练好的模型离线编译成**专属引擎文件（.plan / .engine）**，部署时直接加载做推理。
 
-> 对比着记（呼应 02 篇 §7.6）：**cuDNN 是"通用算子库"**（对任何模型都好用），**TensorRT 是"针对你这一个模型编译出来的专属加速包"**——它牺牲通用性，换来对单个模型更狠的优化。定位上 ≈ Java 平台的 GraalVM native-image（离线编译、绑定平台）。
+> 对比着记（呼应 02 篇 §7.4）：**cuDNN 是"通用算子库"**（对任何模型都好用），**TensorRT 是"针对你这一个模型编译出来的专属加速包"**——它牺牲通用性，换来对单个模型更狠的优化。定位上 ≈ Java 平台的 GraalVM native-image（离线编译、绑定平台）。
 
 ### 7.2 四个核心优化：全是学过的套路
 
@@ -476,10 +476,10 @@ TensorRT 在**构建阶段（Build）**对模型做四件事：
 
 | 优化 | 干什么 | 对应仓库哪招 |
 |---|---|---|
-| **层融合（Layer Fusion）** | 连续小算子合成一个大 kernel，省 kernel launch 和显存读写 | torch.compile（06 篇 §5）/ FlashAttention（§3）同款思路 |
+| **层融合（Layer Fusion）** | 连续小算子合成一个大 kernel，省 kernel launch 和显存读写 | torch.compile（04 篇 §5）/ FlashAttention（§3）同款思路 |
 | **精度优化** | 构建时降到 FP16 / INT8（PTQ 校准），字节数直接省 | §4 量化的推理侧工程化版本 |
-| **Kernel 自动调优** | 在**目标 GPU 上实测**数百种实现，选最快的组合 | 04 篇"填满屋顶区" |
-| **内存规划** | 生命周期不重叠的张量共享显存、预分配 workspace | 04 篇"省显存"的全局版 |
+| **Kernel 自动调优** | 在**目标 GPU 上实测**数百种实现，选最快的组合 | 03 篇"填满屋顶区" |
+| **内存规划** | 生命周期不重叠的张量共享显存、预分配 workspace | 03 篇"省显存"的全局版 |
 
 > 与 torch.compile 的区别：torch.compile 是**运行时 JIT**（首次调用现编）；TensorRT 是**离线 AOT**（部署前编好）——所以它构建慢（数分钟~数十分钟）、推理时零编译开销；也正因绑定目标 GPU 实测，`.plan` 文件**不可跨 GPU 架构迁移**（A100 编的不能在 H100 用）。
 
@@ -527,7 +527,7 @@ trtexec --onnx=model.onnx --saveEngine=model_int8.plan --int8 --calib=calibratio
 4. **版本敏感**：TensorRT / CUDA / cuDNN / 驱动版本必须严格匹配
 5. **核心闭源**：遇 Bug 只能等官方修复
 
-> 这也是本仓库 M5/M6 选 **llama.cpp / vLLM** 而非 TensorRT 的原因：开源、跨平台、教程多、8G 小卡可跑；TensorRT 留给 NVIDIA 生产栈（02 §7.6 已讲它"连 PTX 都砍掉、直接绑定架构"）。
+> 这也是本仓库 M5/M6 选 **llama.cpp / vLLM** 而非 TensorRT 的原因：开源、跨平台、教程多、8G 小卡可跑；TensorRT 留给 NVIDIA 生产栈（02 §7.4 已讲它"连 PTX 都砍掉、直接绑定架构"）。
 
 ---
 
@@ -557,6 +557,6 @@ N 卡生产部署          → TensorRT-LLM   离线 AOT：融合+量化+内存 
 | 量化 | `code/05_llm/`（GGUF 各档位困惑度/速度对比） |
 | llama.cpp 部署 7B int4 | `code/05_llm/` + M6 云端实测 |
 | vLLM 吞吐测试 | M6 在 AutoDL A100/4090D |
-| 手写内核思路 | `code/07_triton/`（Triton 写 SGEMM / FlashAttention，语法见 `docs/07_dsl_kernels.md`） |
+| 手写内核思路 | `code/06_dsl_kernels/`（Triton 写 SGEMM / FlashAttention，语法见 `docs/06_dsl_kernels.md`） |
 
-> 下一篇 06_pytorch_gpu.md 回到 PyTorch 应用层——你会看到，前面学的这些 CUDA 概念，在 PyTorch 里不过是 `.to('cuda')` 一行而已，但懂了底层，才懂得它背后发生了什么。
+> 下一篇 04_pytorch_gpu.md 回到 PyTorch 应用层——你会看到，前面学的这些 CUDA 概念，在 PyTorch 里不过是 `.to('cuda')` 一行而已，但懂了底层，才懂得它背后发生了什么。

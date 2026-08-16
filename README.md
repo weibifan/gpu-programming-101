@@ -28,19 +28,18 @@ gpu-programming-101/
 │   ├── 00_why_gpu.md          # CPU vs GPU、SIMT、硬件架构
 │   ├── 01_environment.md      # CUDA Toolkit、驱动、nvidia-smi、torch.cuda
 │   ├── 02_cuda_basics.md      # kernel、grid/block/thread
-│   ├── 03_memory.md           # 内存层级、合并访问
-│   ├── 04_performance.md      # occupancy、tiling、Nsight 分析
+│   ├── 03_cuda_advanced.md    # 内存模型与性能优化（合并 03/04）
+│   ├── 04_pytorch_gpu.md      # PyTorch GPU：Python 驱动 GPU + 提速三板斧
 │   ├── 05_llm_acceleration.md # LLM 加速专题
-│   ├── 06_pytorch_gpu.md      # PyTorch GPU：Python 驱动 GPU + 提速三板斧
-│   └── 07_dsl_kernels.md      # 用 Python 写高性能内核：Triton 与 TileLang（08/09 已并入）
+│   └── 06_dsl_kernels.md      # 用 Python 写高性能内核：Triton 与 TileLang
 ├── code/
 │   ├── 00_hello/              # 第一个 CUDA 程序 vector_add
 │   ├── 01_threads/            # 线程模型
 │   ├── 03_memory/             # 内存模型
 │   ├── 04_optimization/       # 性能优化（矩阵乘 tiling）
+│   ├── 04_pytorch_gpu/        # PyTorch GPU 示例（旧仓库迁移）
 │   ├── 05_llm/                # LLM 加速实验
-│   ├── 06_pytorch_gpu/        # PyTorch GPU 示例（旧仓库迁移）
-│   ├── 07_triton/             # Triton 内核
+│   ├── 06_dsl_kernels/        # 用 Python 写高性能内核（Triton）
 │   └── 08_cuda_libs/          # cuBLAS / cuDNN / cuFFT / cuRAND 案例
 ├── tools/
 │   └── check_gpu.py           # GPU 环境检测脚本

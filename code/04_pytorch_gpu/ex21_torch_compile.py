@@ -1,11 +1,11 @@
 # =====================================================================
-# 06_pytorch_gpu / ex21_torch_compile.py
+# 04_pytorch_gpu / ex21_torch_compile.py
 # torch.compile 一键编译优化：把 forward 当整体，融合算子
 #
 # 运行（建议有 GPU；无 GPU 也能跑，但 inductor 在 CPU 上收益有限）：
 #   python ex21_torch_compile.py
 #
-# 对应 docs/06_pytorch_gpu.md §5
+# 对应 docs/04_pytorch_gpu.md §4.2（torch.compile）
 #
 # 注意：首次编译要几十秒（建 graph / 生成内核），之后的调用才快；
 #      输入形状需固定，否则会重新编译。

@@ -6,16 +6,16 @@
 //   nvcc sgemm_shared.cu -o sgemm_shared -arch=sm_61
 //   .\sgemm_shared.exe [M] [N] [K]    # 可选边长，默认 1024
 //
-// 对应文档：docs/04_performance.md §3.2 + §4（bank conflict / __syncthreads）
+// 对应文档：docs/03_cuda_advanced.md §10.2 + §11（bank conflict / __syncthreads）
 //
-// 思路（docs/03_memory.md §3.2）：
+// 思路（docs/03_cuda_advanced.md §3.2）：
 //   每个 block 负责输出 C 的一个 TILE x TILE 小块：
 //   1. 循环 K/TILE 次：把 A 的 TILE 小块拷进 As、B 的拷进 Bs（合并访问）
 //   2. __syncthreads()  ->  3. 块内线程从 As/Bs 算累加（读共享内存，快）
 //   4. __syncthreads() 进入下一轮
 //
 // 行长用 TILE+1（padding）：行长 32 恰好是 bank 数，会撞 bank；33 天然错开
-// （docs/04_performance.md §4.1）。
+// （docs/03_cuda_advanced.md §11.1）。
 // =====================================================================
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,8 +1,8 @@
-# 07 用 Python 写高性能内核：Triton 与 TileLang
+# 06 用 Python 写高性能内核：Triton 与 TileLang
 
-> 对应里程碑 M5 之后（配合 `code/07_triton/`）。前面我们用了两条路写 GPU 程序：**CUDA C 手写内核**（docs/02~04，理解原理）和 **PyTorch 黑盒调用**（docs/06，日常使用）。本篇补上中间那块拼图：**用 Python 语法写接近手写性能的内核**。主角有两个——**Triton**（OpenAI 开源、PyTorch `torch.compile` 的代码生成后端、生态主流）和 **TileLang**（北大团队、构建在 TVM 上、国产新秀）。
+> 对应里程碑 M5 之后（配合 `code/06_dsl_kernels/`）。前面我们用了两条路写 GPU 程序：**CUDA C 手写内核**（docs/02~03，理解原理）和 **PyTorch 黑盒调用**（docs/04，日常使用）。本篇补上中间那块拼图：**用 Python 语法写接近手写性能的内核**。主角有两个——**Triton**（OpenAI 开源、PyTorch `torch.compile` 的代码生成后端、生态主流）和 **TileLang**（北大团队、构建在 TVM 上、国产新秀）。
 >
-> 阅读对象：已经看完 04_performance.md 的 tiling 和 05_llm_acceleration.md 的 FlashAttention，想在"自己写内核"这件事上少受 C/C++ 的苦。
+> 阅读对象：已经看完 03_cuda_advanced.md 的 tiling 和 05_llm_acceleration.md 的 FlashAttention，想在"自己写内核"这件事上少受 C/C++ 的苦。
 
 **阅读路线**：先建立"DSL 内核编译器"的整体观——它站在哪一层、对标 Java 生态的什么（§1）；然后掌握 **Triton**：定位与现状（§2）、最小语法（§3）、两个实战 SGEMM / FlashAttention（§4）；再看 Triton 的局限，引出 **TileLang**（§5~§7）；最后一张表选型（§8）。
 
@@ -12,13 +12,13 @@
 
 ### 1.1 三条路径回顾：缺的正是"中间一块"
 
-回顾 docs/06 §1.2 的"用 Python 驱动 GPU 的三条路径"：
+回顾 docs/04 §1.2 的"用 Python 驱动 GPU 的三条路径"：
 
 | 路径 | 代表 | 你写什么 | 共享内存/同步 | 性能 |
 |---|---|---|---|---|
-| 手写内核 | CUDA C（docs/02~04） | 线程级代码 | 手写 `__shared__`/`__syncthreads` | 上限最高 |
+| 手写内核 | CUDA C（docs/02~03） | 线程级代码 | 手写 `__shared__`/`__syncthreads` | 上限最高 |
 | **写内核但用 Python** | **Triton / TileLang（本篇）** | **块（tile）级代码** | **编译器自动安排** | **接近手写** |
-| 完全托管 | PyTorch（docs/06） | 算子/模型 | 黑盒，管不到 | 库级 |
+| 完全托管 | PyTorch（docs/04） | 算子/模型 | 黑盒，管不到 | 库级 |
 
 **DSL（Domain-Specific Language，领域特定语言）** 就站在中间：保留"自定义高性能算子"的能力，把"怎么铺线程、怎么搬共享内存、怎么选指令"全部交给编译器。
 
@@ -60,17 +60,17 @@
 - **归属**：由 OpenAI 开源，现托管于 **triton-lang 组织**，MIT 协议，Meta / AMD / NVIDIA / OpenAI / Intel / Google 等共同贡献
 - **版本**：3.7.x（2026 年中），编译器后端已整体迁移到 **MLIR / LLVM**
 - **硬件后端**：NVIDIA（CC 8.0+，Ampere 起）、AMD（ROCm 6.2+）；CPU 后端开发中
-- **最大用户**：PyTorch `torch.compile` 的 **Inductor** 后端现场生成 Triton 代码（docs/06 §5）；FlashAttention、SGLang、vLLM 等也大量用它写自定义算子
+- **最大用户**：PyTorch `torch.compile` 的 **Inductor** 后端现场生成 Triton 代码（docs/04 §5）；FlashAttention、SGLang、vLLM 等也大量用它写自定义算子
 - **调试**：`TRITON_INTERPRET=1` 可进 Python 解释器、打断点，无 GPU 也能跑通逻辑
 
 ### 2.3 为什么用 Triton，而不是直接写 CUDA C？
 
 - **不用管线程**：CUDA C 里你要自己算 `blockIdx*blockDim+threadIdx`，还要手动 `__shared__` + `__syncthreads()`。Triton 里你只描述"这块 tile 干什么"，编译器把它展开成线程。
-- **自动选指令**：`tl.dot` 会自动用 FFMA 甚至 Tensor Core（A100 上），不用像 04 篇手写 register tiling 那样抠细节。
+- **自动选指令**：`tl.dot` 会自动用 FFMA 甚至 Tensor Core（A100 上），不用像 03 篇手写 register tiling 那样抠细节。
 - **自动调优**：同一份代码，改几个 `BLOCK_*` 编译期常量就能换 tile 大小，编译器为当前硬件重新生成内核。
 - **不牺牲多少性能**：官方 SGEMM / FlashAttention 教程都能跑到对应手写/库的 7~9 成。
 
-> 代价：你只能表达"编译器的目标语言能表达的东西"——极致的指令级优化（比如 04 篇 §3.3 那种手工寄存器复用）仍然要靠 CUDA C。但 95% 的"自定义高性能算子"，Triton 都够用了。
+> 代价：你只能表达"编译器的目标语言能表达的东西"——极致的指令级优化（比如 03 篇 §10.3 那种手工寄存器复用）仍然要靠 CUDA C。但 95% 的"自定义高性能算子"，Triton 都够用了。
 
 ---
 
@@ -111,9 +111,9 @@ add_kernel[(n + 255) // 256](x, y, out, n, BLOCK=256)   # 网格 = 块数，BLOC
 
 ## 4. Triton 实战
 
-### 4.1 SGEMM（对照 `code/07_triton/sgemm.py`）
+### 4.1 SGEMM（对照 `code/06_dsl_kernels/sgemm.py`）
 
-这就是 04_performance.md §3 的 tiling，用 Triton 表达只有三步：
+这就是 03_cuda_advanced.md §10 的 tiling，用 Triton 表达只有三步：
 
 ```python
 @triton.jit
@@ -144,9 +144,9 @@ def matmul_kernel(a_ptr, b_ptr, c_ptr, M, N, K,
     tl.store(c_ptrs, acc, mask=c_mask)
 ```
 
-**和 04 篇手写版的对应关系**：
+**和 03 篇手写版的对应关系**：
 
-| 04 篇手写（sgemm_shared / sgemm_tiled） | Triton 版 |
+| 03 篇手写（sgemm_shared / sgemm_tiled） | Triton 版 |
 |---|---|
 | `blockIdx.x/blockIdx.y` 决定输出小块 | `pid_m / pid_n` |
 | 手写 `__shared__ As[BLOCK][BLOCK+1]` + 拷贝循环 | `tl.load` 一条语句（编译器搬到共享内存） |
@@ -154,11 +154,11 @@ def matmul_kernel(a_ptr, b_ptr, c_ptr, M, N, K,
 | 手写 `sum += As[ty][kk]*Bs[kk][tx]` | `tl.dot(a, b, acc)` |
 | padding 防 bank conflict | 编译器自动处理 |
 
-> 额外一提 `GROUP_SIZE_M`：它让**同一行的小块挨着调度**，相邻块共享同一段 A 的 K 行，L2 命中率更高——这是 04 篇 §5"四板斧"之外的一招"调度优化"，写 `sgemm.py` 时可以直接对比有无。
+> 额外一提 `GROUP_SIZE_M`：它让**同一行的小块挨着调度**，相邻块共享同一段 A 的 K 行，L2 命中率更高——这是 03 篇 §12"四板斧"之外的一招"调度优化"，写 `sgemm.py` 时可以直接对比有无。
 
-预期：`code/07_triton/sgemm.py` 跑 4096³，正确性对 torch 通过，速度约为 cuBLAS 的 **70%~90%**。
+预期：`code/06_dsl_kernels/sgemm.py` 跑 4096³，正确性对 torch 通过，速度约为 cuBLAS 的 **70%~90%**。
 
-### 4.2 FlashAttention（对照 `code/07_triton/flash_attention.py`）
+### 4.2 FlashAttention（对照 `code/06_dsl_kernels/flash_attention.py`）
 
 这就是 05_llm_acceleration.md §3 的 FlashAttention，tiling + 在线 softmax 各就位：
 
@@ -190,7 +190,7 @@ acc = acc / l_i[:, None]                                      # 最后归一
 1. **`tl.exp` 用自然对数域**：`m_i/l_i` 统计量、`alpha`、最终 `acc / l_i` 全部用自然指数/对数，才能和 PyTorch 的 `softmax` 严格一致。用 `tl.math.exp2`（基 2）等价于给 logits 乘了 `ln2`，结果会系统性偏差。
 2. **head 维（BLOCK_D）必须是 2 的幂**（代码里用 128），`tl.arange` 不接受任意长度。
 
-预期：`code/07_triton/flash_attention.py` 跑 `[4,8,2048,128]` 因果注意力，与 `F.scaled_dot_product_attention(is_causal=True)` 误差 < 1e-2，速度接近 `F.sdpa`。
+预期：`code/06_dsl_kernels/flash_attention.py` 跑 `[4,8,2048,128]` 因果注意力，与 `F.scaled_dot_product_attention(is_causal=True)` 误差 < 1e-2，速度接近 `F.sdpa`。
 
 ---
 
@@ -198,7 +198,7 @@ acc = acc / l_i[:, None]                                      # 最后归一
 
 Triton 很好，但手写复杂算子时仍有三重困境（这也正是 TileLang 诞生的背景）：
 
-1. **CUDA 开发门槛极高**：CUDA C++ / PTX 需要深入理解线程模型、共享内存、Bank Conflict、Tensor Core 等底层细节，一个高性能 GEMM 内核动辄数百甚至上千行（04 篇你亲自写过）。
+1. **CUDA 开发门槛极高**：CUDA C++ / PTX 需要深入理解线程模型、共享内存、Bank Conflict、Tensor Core 等底层细节，一个高性能 GEMM 内核动辄数百甚至上千行（03 篇你亲自写过）。
 2. **Triton 这类高层 DSL 仍有局限**：`tl.arange` 长度必须是 2 的幂；线程绑定、数据布局（layout）基本由编译器黑箱决定，想显式控制很费劲；对 **MLA（Multi-head Latent Attention）、FP8 混合精度**等复杂算子，编译器难以自动生成最优代码。
 3. **硬件碎片化**：NVIDIA、AMD、华为昇腾、摩尔线程的指令集差异巨大，每适配一种硬件几乎要重写一遍算子——Triton 的官方后端目前只有 NVIDIA / AMD。
 
@@ -319,18 +319,18 @@ ICLR 2026 论文（《TileLang: Bridge Programmability and Performance in Modern
 
 **怎么选（结合本仓库）**：
 
-- **想学内核思路 / 跑通第一个融合算子** → **Triton**（`code/07_triton/`，教程多、跟 torch.compile 同源）
+- **想学内核思路 / 跑通第一个融合算子** → **Triton**（`code/06_dsl_kernels/`，教程多、跟 torch.compile 同源）
 - **要写复杂算子且受困于 Triton 的"黑箱布局"** → **TileLang**（更细的调度控制、多后端）
-- **要极致指令级性能 / 目标硬件是单一 NVIDIA 卡** → CUDA C（04 篇那条路）
-- **只是用 PyTorch** → 你大概率不需要本篇（06 篇已够）
+- **要极致指令级性能 / 目标硬件是单一 NVIDIA 卡** → CUDA C（03 篇那条路）
+- **只是用 PyTorch** → 你大概率不需要本篇（04 篇已够）
 
 ### 本篇与代码的对应
 
 | 概念 | 对应代码 |
 |---|---|
-| 最小语法（§3） | `code/07_triton/sgemm.py` 里的 `@triton.jit`/`tl.arange`/`tl.load` |
-| SGEMM tiling（§4.1） | `code/07_triton/sgemm.py`（对照 `code/04_optimization/` 三版手写） |
-| FlashAttention（§4.2） | `code/07_triton/flash_attention.py` |
-| 在线 softmax / 因果掩码 | `code/07_triton/flash_attention.py` 主循环 |
+| 最小语法（§3） | `code/06_dsl_kernels/sgemm.py` 里的 `@triton.jit`/`tl.arange`/`tl.load` |
+| SGEMM tiling（§4.1） | `code/06_dsl_kernels/sgemm.py`（对照 `code/04_optimization/` 三版手写） |
+| FlashAttention（§4.2） | `code/06_dsl_kernels/flash_attention.py` |
+| 在线 softmax / 因果掩码 | `code/06_dsl_kernels/flash_attention.py` 主循环 |
 
-> 下一篇可以回到 `docs/05_llm_acceleration.md` 的 M6 计划：在 A100/4090D 上把 `code/07_triton/` 跑起来，和官方 FlashAttention、llama.cpp/vLLM 做吞吐对比——学到这里，"从原理到应用"的闭环就完整了。
+> 下一篇可以回到 `docs/05_llm_acceleration.md` 的 M6 计划：在 A100/4090D 上把 `code/06_dsl_kernels/` 跑起来，和官方 FlashAttention、llama.cpp/vLLM 做吞吐对比——学到这里，"从原理到应用"的闭环就完整了。

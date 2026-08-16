@@ -1,6 +1,6 @@
 # =====================================================================
-# 06_pytorch_gpu / ex02_tensor.py
-# Tensor 的设备属性与数据流动（docs/06_pytorch_gpu.md §2~§3）
+# 04_pytorch_gpu / ex02_tensor.py
+# Tensor 的设备属性与数据流动（docs/04_pytorch_gpu.md §2~§3）
 #
 # 运行（有 GPU 的机器，如远端 Win10；本地无 GPU 会自动退回 CPU 演示）：
 #   python ex02_tensor.py
@@ -21,7 +21,7 @@ def device_name():
 
 
 def main():
-    # ---- 1) 快速体检（对应 docs/06 §3.3）----
+    # ---- 1) 快速体检（对应 docs/04 §2.3）----
     print("== 环境体检 ==")
     print("cuda 可用          :", torch.cuda.is_available())
     if torch.cuda.is_available():
@@ -30,7 +30,7 @@ def main():
     else:
         print("（本地无 NVIDIA GPU，以下演示自动走 CPU；.to('cuda') 相关步骤会跳过）")
 
-    # ---- 2) Tensor 的 .device 属性（docs/06 §3.1）----
+    # ---- 2) Tensor 的 .device 属性（docs/04 §2.2）----
     print("\n== Tensor 住在哪 ==")
     x = torch.randn(1000, 1000)          # 默认在 CPU
     print("torch.randn 默认   :", x.device)
@@ -44,7 +44,7 @@ def main():
         except RuntimeError as e:
             print("跨设备相加报错     :", type(e).__name__)
 
-    # ---- 3) CPU vs GPU 矩阵乘计时（docs/06 §2.1：x @ x.T -> cuBLAS）----
+    # ---- 3) CPU vs GPU 矩阵乘计时（docs/04 §2.1：x @ x.T -> cuBLAS）----
     print("\n== CPU vs GPU 矩阵乘 2048x2048 ==")
     a = torch.randn(2048, 2048)
     start = time.perf_counter()
@@ -61,7 +61,7 @@ def main():
         print(f"GPU 耗时          : {time.perf_counter() - start:.3f} s")
         print(f"结果一致          : {torch.allclose(c_cpu, c_gpu.cpu(), atol=1e-2)}")
 
-        # ---- 4) 设默认设备（docs/06 §3.2，2026 年的省事写法）----
+        # ---- 4) 设默认设备（docs/04 §2.3，2026 年的省事写法）----
         print("\n== torch.set_default_device('cuda') ==")
         torch.set_default_device('cuda')
         b = torch.randn(1000, 1000)      # 直接在显存上创建

@@ -1,5 +1,5 @@
 # =====================================================================
-# 06_pytorch_gpu / ex11_fitting.py
+# 04_pytorch_gpu / ex11_fitting.py
 # 用一个小 MLP 在 GPU 上拟合 y = sin(x)（曲线拟合）
 #
 # 运行（有 GPU 优先，无 GPU 自动走 CPU）：
@@ -10,7 +10,7 @@
 #   2. 训练循环三行核心：loss.backward() / optimizer.step() / zero_grad
 #   3. 观察 loss 下降，最终打印拟合采样点对比
 #
-# 对应 docs/06_pytorch_gpu.md §2.2（device 贯穿的训练循环）
+# 对应 docs/04_pytorch_gpu.md §2.1 / §2.4（device 贯穿的训练循环）
 # =====================================================================
 import math
 

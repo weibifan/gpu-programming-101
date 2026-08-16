@@ -263,13 +263,13 @@ SIMT（CUDA warp，GPU）：
    - SIMD：数据是**打包在同一个宽寄存器里的 8/16 个数**，靠编译器/程序员显式向量化
    - SIMT：数据是**32 个独立线程各自手里的数**，靠硬件把线程组 warp，你写 kernel 时完全不用管"打包"
 
-2. **SIMT 的"单指令"是假象**：warp 里 32 个线程**各有各的寄存器**，只是硬件让它们**锁步执行同一条指令**（见 `00_why_gpu.md` §10.2）。一旦遇到 `if` 分支且线程走向不同，部分线程就要"排队等"——这就是 **warp 发散**（04_performance.md 会专门讲）
+2. **SIMT 的"单指令"是假象**：warp 里 32 个线程**各有各的寄存器**，只是硬件让它们**锁步执行同一条指令**（见 `00_why_gpu.md` §10.2）。一旦遇到 `if` 分支且线程走向不同，部分线程就要"排队等"——这就是 **warp 发散**（03_cuda_advanced.md 会专门讲）
 
 3. **SIMD 是"一条指令更宽"，SIMT 是"一条指令管更多人"**：CPU 用 SIMD 把一条指令的吞吐放大几倍；GPU 把同样的思路按"人数"放大到千倍（warp 数 × 每 SM 驻留多 warp）。所以常有人说：**GPU 的 SIMT = SIMD 思想的人数放大版**（呼应 `00_why_gpu.md` §7）
 
 **对编程的含义：**
 - 你在 CPU 上写 `for` 循环（SISD 的直觉），编译器会尝试自动向量化成 SIMD——但成败取决于数据是否连续、分支是否简单
-- 你在 GPU 上写 kernel（SIMT 的直觉），**天然按"每线程一个数据"设计**，让相邻线程访问相邻地址（合并访问，见 03_memory.md §5），warp 自然吃得满
+- 你在 GPU 上写 kernel（SIMT 的直觉），**天然按"每线程一个数据"设计**，让相邻线程访问相邻地址（合并访问，见 03_cuda_advanced.md §5），warp 自然吃得满
 - 一句话：**CPU 编程想的是"怎么让一条指令算更多数"（SIMD），GPU 编程想的是"怎么让更多线程喂满一条指令"（SIMT）**
 
 > 补充：Flynn 分类法其实有四个象限，还有一个 **MIMD**（多指令多数据）——多核 CPU、多 GPU 集群都属于它：每个核/每张卡跑各自的指令和数据。SISD / SIMD / SIMT 讲的是"一个核 / 一块 SM 内部"，MIMD 讲的是"多个处理器之间"。
@@ -372,14 +372,9 @@ OpenGL（图形专用）→ CUDA（通用计算）
 
 CUDA（Compute Unified Device Architecture）是 NVIDIA 推出的**通用 GPU 编程平台**。
 
-**类比**：CUDA = 给 NVIDIA GPU 写程序的"C 语言"。
+**第一个类比：CUDA = 给 NVIDIA GPU 写程序的"C 语言"。** 但和 C 语言比，CUDA 不止是一套语法——它还自带**编译器（nvcc）、运行时（驱动）、标准库（cuBLAS / cuDNN…）和生态（PyTorch…）**。有这四样东西，它就不只是一门语言，而是一个完整的**平台**。
 
 **更精确的类比：CUDA 之于 GPU，≈ .NET 之于 Windows/CPU。**
-
-很多人第一次接触 CUDA 时会问：它和微软的 MFC、.NET 像不像？——**本质不同，但可以做"层次"类比**：
-
-* **MFC 最不像**：它只是 Win32 API 的 C++ 封装类库（窗口、消息循环），**没有自己的编译器/运行时**，本质还是普通 CPU 程序
-* **CUDA 和 .NET 是同一类东西**：都提供"编译器 + 运行时 + 标准库 + 生态"，只是 CUDA 面向 GPU（并行计算）、.NET 面向 Windows/CPU（通用应用）
 
 | | CUDA | .NET |
 |---|---|---|
@@ -390,13 +385,9 @@ CUDA（Compute Unified Device Architecture）是 NVIDIA 推出的**通用 GPU �
 | 标准库 | cuBLAS / cuDNN / cuFFT / cuRAND | BCL（基类库） |
 | 编程模型 | 海量轻量线程 + SIMT（见 §3.2） | 托管对象 + 线程池 |
 
-> 一句话：**CUDA 之于 GPU，≈ .NET 之于 Windows/CPU**。两者都是"自带编译器、自带运行时、自带标准库"的完整平台，只是目标处理器不同。
+> 表里几个词先认一下（都是 CPU 编程里没有的）：**host** = 主机，即 CPU 及其系统内存；**device** = 设备，即 GPU 及其显存（§5.2 正式展开）；**Runtime / Driver** 是 CUDA 的两层运行时 API（底层驱动 + 上层封装，见本篇 §7.3）；**IL** = Intermediate Language，.NET 的中间语言（≈ Java 字节码）；**CLR** = 公共语言运行时，.NET 的"虚拟机"（≈ JVM）。
 
-> 表里几个词先认一下（都是 CPU 编程里没有的）：**host** = 主机，即 CPU 及其系统内存；**device** = 设备，即 GPU 及其显存（§5.2 正式展开）；**Runtime / Driver** 是 CUDA 的两层运行时 API（底层驱动 + 上层封装，具体见 07 篇）；**IL** = Intermediate Language，.NET 的中间语言（≈ Java 字节码）；**CLR** = 公共语言运行时，.NET 的"虚拟机"（≈ JVM）。
-
-**它和 Java 平台像不像？——像，而且在某些点上比 .NET 更贴切。**
-
-同样套"编译器 + 运行时 + 标准库"的框架：
+**补充：它和 Java 平台像不像？——像，但只在"PTX≈字节码"这一处比 .NET 更贴切。**
 
 | | Java | CUDA |
 |---|---|---|
@@ -406,20 +397,41 @@ CUDA（Compute Unified Device Architecture）是 NVIDIA 推出的**通用 GPU �
 | 标准库 | JDK 的 `java.*` | cuBLAS / cuDNN / cuFFT / cuRAND |
 | 生态 | Maven、Spring… | PyTorch、TensorRT… |
 
-为什么说 Java 甚至更贴切：
+Java 更贴切的**只有一点**：
 
-* **PTX ≈ Java 字节码**：PTX 官方就叫"虚拟机器指令集（virtual machine ISA）"，它和具体 GPU 架构无关，由驱动在运行时 **JIT** 成该卡的 SASS——这正是 JVM"字节码 → JIT → 本机码"的翻版
-* **一次编译、多处运行**：Java 靠 JVM 跑在不同 CPU 上；CUDA 靠 PTX 跑在不同代 NVIDIA GPU 上（前向兼容，老 PTX 能在新卡上跑）
+* **PTX ≈ Java 字节码**：PTX 官方就叫"虚拟机器指令集（virtual machine ISA）"，它和具体 GPU 架构无关，由驱动在运行时 **JIT** 成该卡的 SASS——这正是 JVM"字节码 → JIT → 本机码"的翻版；Java 靠它跨 CPU，CUDA 靠它跨 GPU 代际（前向兼容，老 PTX 能在新卡上跑）
 
-但有三点**不像**（关键区别）：
+但**整体平台类比，还是 .NET 更像 CUDA**——理由正是 Java 最不像的那一点：
 
-1. **硬件绑定**：Java 跨平台（Win/Linux/Mac 都能跑）；CUDA **只认 NVIDIA**。真正"跨厂商"的对应物是 OpenCL / HIP / SYCL——"Java"这个类比更适合形容"通用 GPU 平台"而非 CUDA 本身
-2. **内存管理**：Java 有垃圾回收，开发者不用管内存；CUDA 要**手动** `cudaMalloc`/`cudaFree`（这正是 §11 Q4 把"显存管理"列为难点之一的原因）
-3. **语言本体**：Java 是完整的独立语言；CUDA 没有自己的语言，只是"给 C/C++ 加了 `__global__`、`<<<>>>` 这些扩展"
+* **Java 的招牌是"跨平台"**：一次编译，任何 OS/CPU 都能跑；CUDA 恰恰相反，**只认 NVIDIA 一家**。Java 天生"到处跑"，CUDA 天生"只认一家"，性格相反
+* **.NET 默认锚定在底层微软这一家**（Windows/x86），就像 CUDA 默认锚定 NVIDIA GPU 这一家——**"默认支持底层的一个东西"正是 .NET 和 CUDA 的共同点，也是 Java 永远做不到的**
 
-> 一句话：**结构上 CUDA ≈ Java 平台（尤其 PTX 之于字节码、驱动 JIT 之于 JVM）**，但它是"只针对 NVIDIA 一家硬件、且要求手动管显存"的 Java。
+CUDA 那三点"不像 Java"其实都保留：① 硬件绑定（只认 NVIDIA；真正"跨厂商"的对应物是 OpenCL / HIP / SYCL）；② 内存管理（Java 有 GC，CUDA 要手动 `cudaMalloc`/`cudaFree`，见 §11 Q4）；③ 语言本体（Java 是完整语言，CUDA 只是给 C/C++ 加 `__global__`、`<<<>>>` 扩展）。
 
-**那么 MFC 在 CUDA 生态里像谁？——像 cuDNN（详见 §10.1）。**
+> 一句话总结两份类比：**整体平台类比用 .NET（编译器 + 运行时 + 标准库，且默认锚定底层一家）；PTX 机制类比用 Java（虚拟指令集 + JIT）**。
+
+**一张蓝图看懂所有"平台"**：
+
+说了半天 .NET 和 Java，其实它们和 CUDA 是**同一张蓝图**——任何"平台"都长这样：
+
+```
+             编译器             中间语言               运行时                 标准库（并列工具箱）
+Java   .java ──javac──→   字节码(.class)   ──JVM(JIT)──→  各 CPU 机器码      Java SE 标准类库
+.NET   .cs   ──Roslyn──→  IL（中间语言）  ──CLR(JIT)──→  各 CPU 机器码      BCL 基类库
+CUDA   .cu   ──nvcc────→  PTX            ──驱动/运行时──→  各 GPU 的 SASS     cuBLAS / cuDNN / cuFFT / cuRAND
+                              ↑                            ↑
+                         架构无关（一次编译）          运行时按机器 JIT（到处运行）
+```
+
+这张图讲清楚三件事：
+
+1. **为什么叫"平台"而不是"语言"**——因为有三件套"编译器 + 中间语言 + 运行时"，核心是中间语言（字节码 / IL / PTX）：**它和具体硬件无关，所以能"一次编译、到处运行"**——Java/.NET 靠它跨 CPU，CUDA 靠它跨 GPU 代际（老 PTX 能在新卡上跑，见 §7.3）。
+2. **标准库是"并列"的，不在编译链上**——BCL、标准类库、cuBLAS/cuDNN 都是"躺在运行时旁边、供上层直接调用"的现成工具箱（下一条用它来判"库 vs 平台"）。
+3. **开发和运行是分家的**——写 Java 要 **JDK**（含 javac 编译器），跑现成程序只要 **JRE**（JVM + 标准库）；CUDA 同理：写 `.cu` 要装 nvcc（CUDA Toolkit），跑现成程序只要驱动 + 运行时——PyTorch 甚至把运行时（cu118）都打包在安装包里，系统只需有驱动（这正是 01_environment.md 里"nvcc 版本和 PyTorch 内置 CUDA 版本互不影响"的由来）。
+
+**那"类库"和"平台"怎么分？看它有没有自己的编译器/运行时。**
+
+MFC 是微软的 Win32 封装类库（窗口、消息循环），**没有自己的编译器/运行时**，本质还是普通 CPU 程序；cuDNN 同理，只是躺在 CUDA 平台上的卷积类库。两者都是"供上层调用、不改变底层本质"的封装：
 
 ```
 MFC    : Win32   ≈   cuDNN : CUDA
@@ -431,24 +443,41 @@ MFC    : Win32   ≈   cuDNN : CUDA
 * MFC 没有 → 它只是"库"；cuDNN / cuBLAS 也没有 → 它们也只是"库"
 * CUDA 有 nvcc + Runtime → 是"平台"；.NET 有 Roslyn + CLR → 也是"平台"
 
-MFC 封装 Win32 的窗口、消息循环；cuDNN 封装卷积、Attention 这些算子。两者都是"供上层调用、不改变底层本质"的封装——这就是 **MFC ≈ cuDNN** 的含义。
+MFC 封装 Win32 的窗口、消息循环；cuDNN 封装卷积、Attention 这些算子——这就是 **MFC ≈ cuDNN** 的含义（详见 §10.1）。
 
-### 5.2 CUDA 的核心概念
+### 5.2 编程模型：Host、Device 和四步协作
+
+**先解释 Host 和 Device 的概念**。CUDA 程序里永远是**两台机器**在协作：
+
+* **Host（主机）** = CPU + 系统内存。你熟悉的"电脑本体"：跑 `main()`、写业务逻辑。
+* **Device（设备）** = GPU + 显存（VRAM）。专门做大规模并行计算的那台"计算器"。
+
+**各自的存储器**：
+
+| | Host | Device |
+|---|---|---|
+| 主脑 | CPU | GPU |
+| 存储器 | 系统内存（RAM） | 显存（VRAM） |
+| 里存什么 | 程序、普通变量 | 要被并行计算的大数组 |
+
+系统内存和显存是**两个物理上分开的存储空间**，中间靠 **PCIe 总线**连接（主板上插显卡的那根长槽）。数据要在两者之间流动，唯一通道就是 PCIe——这也是"拷贝"贵的根本原因：PCIe 的带宽比内存/显存内部慢一个数量级，所以"搬数据"要一次搬大批，别小口小口搬。
+
+**其次，编程模型**（Host/Device 分工下的四步协作）：
 
 ```
-主机（Host） = CPU + 系统内存
-设备（Device）= GPU + 显存（VRAM）
-
-编程模型：
-1. 在 CPU 上准备数据
-2. 把数据从内存拷贝到显存（CPU → GPU）
+1. 在 CPU 上准备数据（Host 内存）
+2. 把数据从内存拷贝到显存（Host → Device，走 PCIe）
 3. 在 GPU 上启动海量线程，执行计算
-4. 把结果从显存拷贝回内存（GPU → CPU）
+4. 把结果从显存拷贝回内存（Device → Host）
 ```
 
 这四步正是 §3.4 "GPU 运算像 CPU 读文件"的落地：**第 2 步"搬进工作区"、第 3 步"并行算"、第 4 步"成品搬回桌面"**——只是把"读文件"换成了显存里的 `cudaMemcpy`。
 
+这套模型马上会写成真实代码（§5.3），再对照代码一步步看数据怎么流（§5.4）。
+
 ### 5.3 CUDA Hello World（向量加法）
+
+> 上一节（§5.2）讲了编程模型：Host/Device 分工、四步怎么走。这一节通过一个**完整案例**（两个向量相加）把核心原理**写成真实代码**——host/device 分工、四步编程模型、kernel 启动，全都在代码里现形。看完代码，§5.4 再对照这段程序一步步看数据怎么流。
 
 ```cuda
 // 这是 CUDA C 写的代码，文件后缀 .cu
@@ -505,10 +534,10 @@ int main() {
 }
 ```
 
-对照 §5.2 的四步编程模型，这段代码**一一对应**：
+这段代码虽然按顺序写了 6 步（malloc → cudaMalloc → cudaMemcpy → 启动 kernel → cudaMemcpy → free），但抽象成编程模型只有 **4 件事**——对照如下（这套模型的系统讲解见 §5.2）：
 
 ```
-§5.2 编程模型                §5.3 代码
+四步编程模型                  §5.3 代码
 1 准备数据         ←→   malloc + 初始化（第 1 步）
 2 搬到显存         ←→   cudaMalloc + cudaMemcpy（第 2、3 步）
 3 启动海量线程算    ←→   vec_add<<<...>>>(...)（第 4 步）
@@ -517,26 +546,57 @@ int main() {
 
 ### 5.4 这段代码在做什么？数据怎么流
 
-把 §5.3 的代码从头到尾走一遍，看数据怎么流：
+§5.2 讲了编程模型，§5.3 写了代码。这一节用一张**时序图**把 §5.3 的代码从头到尾走一遍：左边是 Host（CPU），右边是 Device（GPU），**时间自上而下**。一眼同时看到两件事——**数据怎么流**，以及 §5.2 那套协作里**谁在干什么**：
 
+```mermaid
+sequenceDiagram
+    participant H as Host（CPU）
+    participant D as Device（GPU）
+    Note over H: (1) 准备数据：malloc + 初始化 a、b
+    H->>D: (2) 搬到显存：cudaMalloc 分配显存
+    H-->>D: (2) 搬到显存：cudaMemcpy 拷贝 a、b（数据走 PCIe）
+    Note over D: d_a、d_b 就位
+    H->>D: (3) 启动线程：vec_add<<<...>>>（异步，CPU 不等）
+    Note over D: 100 万个线程并行算：c[i]=a[i]+b[i]（例：1+2=3）
+    D-->>H: (4) 搬回结果：cudaMemcpy 把 c 拷回（数据走 PCIe）
+    Note over H: 拿到结果，free 释放
 ```
-CPU 内存:  [1, 2, 3, 4, 5, 6, ...]    ← 准备数据
-                ↓ 拷贝到显存
-GPU 显存:  [1, 2, 3, 4, 5, 6, ...]    ← 数据就位
-                ↓ 启动 100 万个线程
-线程0: 1+2=3  → c[0]
-线程1: 3+4=7  → c[1]
-线程2: 5+6=11 → c[2]
-...
-                ↓ 结果拷回内存
-CPU 内存:  [3, 7, 11, 15, 19, 23, ...]  ← 拿到结果
-```
+
+这张图读起来就三点：
+
+* **时间顺序 = 代码顺序**：时间自上而下，每一行消息对应 §5.3 代码的第 1~5 步；标注在消息上的 (1)~(4) 就是 §5.2 编程模型的四步。
+* **箭头 = 协作**：CPU 只干两件事——准备数据（(1)），然后**发命令、搬数据**（(2)(3)(4)）；真正的"算"（那 100 万个线程）全在 Device 里，CPU 管不着。
+* **数据流 = 箭头类型**：**实线箭头 `->>` 是命令**，**虚线箭头 `-->>` 是数据**真的在 PCIe 上流动——(2) 搬过去、(4) 搬回来。
+
+> 顺带一个细节：`vec_add<<<...>>>` 这条启动命令**一发出 CPU 就返回了**，不用等 GPU 算完（异步，原因见 §6.3）。真正会"停下来等"的，是最后那条把结果搬回内存的 `cudaMemcpy`。
 
 **对照 §1.2 的概念版**：同一道"100 万个数相加"，§1.2 只是描述了"安排 100 万个线程"，而这里已经变成了真实代码——第 4 行的 `vec_add<<<...>>>` 就是"安排线程"那句话的 C 语言形态。
 
 ## 6. kernel 与执行模型
 
 > §5 写出了第一段 CUDA 代码，并走了一遍它的数据流。这一节回答四个问题：**kernel 到底是个什么样的函数（§6.1）**、**`<<<>>>` 那行启动语法怎么读（§6.2）**、**它为什么是异步的、下一步拷贝为什么不会"抢跑"（§6.3）**、**两个数字怎么组织成千上万线程、GPU 凭什么能开出这么多线程（§6.4~§6.5）**。
+
+**动手前的定位：这一节的"编程姿势"≈ Win32 C，而 PyTorch 的姿势 ≈ C#（.NET）**
+
+> §5.1 比的是"平台"（CUDA 和 .NET 都有编译器 + 运行时 + 标准库）。现在换个角度，比一下**编程的两种姿势**——同样是给这台 GPU 写程序，你可以写得很低，也可以写得很高：
+
+| | CUDA C 编程 | Win32 C 编程 | PyTorch 编程 | C#/.NET 编程 |
+|---|---|---|---|---|
+| 语言层级 | 底层 C/C++ 方言 | C | 高层 Python | 高层语言 |
+| 核心对象 | `cudaMalloc` 的显存指针 | `malloc` / `HWND` 句柄 | `Tensor` | 托管对象 |
+| 自己写的部分 | `__global__` kernel + `<<<>>>` 启动 | `WndProc` 回调 + 消息循环 | `nn.Sequential`、`loss.backward()` | 业务类、LINQ |
+| 系统提供的库 | 链接 `-lcublas` / `-lcudnn` | 链接 `user32` / `kernel32` | torch 内部调同一套（见 §10.3） | .NET BCL（`System.*`） |
+| 内存 | 手动 `cudaFree` | 手动 `free` | 引用计数 + 显存手动 | GC 自动 |
+| 感觉 | 贴近机器、事必躬亲 | 贴近机器、事必躬亲 | 面向任务、开箱即用 | 面向任务、开箱即用 |
+
+关键有四点：
+
+1. **两层用的是同一套"系统 DLL"**——cuBLAS / cuDNN / cuFFT / cuRAND。CUDA C 编译时直接链接它们；PyTorch 内部调的就是它们（`torch.matmul` 派给 cuBLAS，见 §10.3）。所以更准确的说法是：**PyTorch ≈ 用 C# 写程序，而它的".NET + Win32"层 = ATen 运行时 + CUDA 类库**。
+2. **下沉通道 = P/Invoke**：C# 要极致性能时 P/Invoke 进 C；PyTorch 要控制力时下沉写 Triton / CUDA kernel。本仓库的排布正好是这三段：**02~03 手写 CUDA C ≈ Win32 C → 06 Triton ≈ P/Invoke 那一层 → 04 PyTorch ≈ C#**。
+3. **一处会带偏你的地方**：C# 程序员几乎不用管内存（GC 全包），PyTorch 却**必须**管显存和带宽——`.to('cuda')`、`empty_cache()`、batch 凑够再搬。因为 GPU 最贵的是带宽不是算力（03 篇整篇的主题）。PyTorch 是"托管"，但不是"全托管"。
+4. 这一类比和 §5.1 的平台类比**不冲突**：平台类比回答"CUDA 这套平台像不像 .NET/Java"（像，编译器+运行时+标准库的架构一致）；姿势类比回答"同一台 GPU 上，两种写法各像什么"（CUDA C 像 Win32 C、PyTorch 像 C#）。一个管"平台长什么样"，一个管"代码怎么写"。
+
+> 一句话：**把"Windows"换成"GPU"，这个类比从语法、内存管理到运行时分层全都成立**，唯一要打的补丁是"PyTorch 的显存要自己管"。下面就从"Win32 C 姿势"的这一节开始——先看 kernel 到底是个什么样的函数。
 
 ### 6.1 kernel（核函数）：真正跑在 GPU 上的 C 函数
 
@@ -634,7 +694,7 @@ vec_add  <<< blocks , threads_per_block >>>  ( d_a, d_b, d_c, n )
 <<<grid, block, shared_mem, stream>>>  // 可选：在指定的 CUDA 流上执行
 ```
 
-> **stream（流）**是 CUDA 里"GPU 上的一排队列"：你把一个个操作（kernel、拷贝）提交到流里，GPU 按提交顺序依次执行。默认流 = 程序一开始就自动存在的那个流，够基础篇用了；多个流可以让不相关的操作并行跑（`04_performance.md` 会讲）。
+> **stream（流）**是 CUDA 里"GPU 上的一排队列"：你把一个个操作（kernel、拷贝）提交到流里，GPU 按提交顺序依次执行。默认流 = 程序一开始就自动存在的那个流，够基础篇用了；多个流可以让不相关的操作并行跑（`03_cuda_advanced.md` 会讲）。
 
 **最后提醒这行的"性格"**：它不是普通函数调用，而是**异步下发命令**——CPU 把"启动 100 多万个线程跑 `vec_add`"的命令发给 GPU 就立刻返回、继续往下走，不等 GPU 算完（详见 §6.1 规则 3）。
 
@@ -661,7 +721,7 @@ GPU:     └─ 跑 vec_add（所有线程算完）
 CPU:  解除阻塞，继续执行 free() 等
 ```
 
-所以 CPU 的"下一条指令"恰好是**安全阀**——它不往前走，直到 GPU 干完活。真正"CPU 不等 GPU"只发生在 kernel 启动本身；一旦遇到**需要数据结果的同步操作**（`cudaMemcpy` 设备→主机、`cudaDeviceSynchronize`），CPU 就会等。想真正让拷贝也不阻塞、让 CPU 和 GPU 流水线并行，用的是 `cudaMemcpyAsync` + 独立流（`04_performance.md` 会讲），默认流下的上述同步保证是 CUDA 的硬性规则。
+所以 CPU 的"下一条指令"恰好是**安全阀**——它不往前走，直到 GPU 干完活。真正"CPU 不等 GPU"只发生在 kernel 启动本身；一旦遇到**需要数据结果的同步操作**（`cudaMemcpy` 设备→主机、`cudaDeviceSynchronize`），CPU 就会等。想真正让拷贝也不阻塞、让 CPU 和 GPU 流水线并行，用的是 `cudaMemcpyAsync` + 独立流（`03_cuda_advanced.md` 会讲），默认流下的上述同步保证是 CUDA 的硬性规则。
 
 > 一句话：**kernel 启动本身是异步的，但它后面的同步操作（拷贝/同步）会替你把"等"补上**——流内顺序 + 阻塞拷贝，保证你不会读到没算完的数据。
 
@@ -776,7 +836,7 @@ GPU 的线程**极轻**——每个线程只占几十个寄存器，GPU 以 **32
    python → TorchDynamo 抓图 → TorchInductor 生成 Triton → Triton 编译器 → PTX → SASS
 ```
 
-区别只在"**谁、在什么时候做编译**"：① 是你写代码时编好，② 是库发布时编好、你只负责加载，③ 是运行时现场编。下面分别拆开。
+区别只在"**谁、在什么时候做编译**"：① 是你写代码时编好，② 是库发布时编好、你只负责加载，③ 是运行时现场编。② ③ 两条 PyTorch 路线的**具体机制**放到 `04_pytorch_gpu.md` §5 里拆开讲（那里你正在用 PyTorch，有语境）；本节拆开 ① CUDA C 的编译链（7.2~7.3），以及和它对照的离线编译 TensorRT（7.4）。
 
 ### 7.2 CUDA C 的编译链：.cu → NVVM IR → PTX → SASS
 
@@ -814,7 +874,7 @@ nvcc -arch=compute_61 -code=sm_61,compute_61 vector_add.cu -o vec_add.exe
 
 **为什么要有 PTX 这一层**（全是现实工程需求）：
 
-* **向前兼容**：sm\_61 时代的 PTX 拿到 sm\_75 / 新卡上，驱动 JIT 一下就能跑——这正是 §7.6 里"同一个 nvcc 程序能同时跑 GTX 1080 和 RTX 2080"的原因；若只嵌 SASS（`-arch=sm_61` 且不带 PTX），换架构就直接跑不起来
+* **向前兼容**：sm\_61 时代的 PTX 拿到 sm\_75 / 新卡上，驱动 JIT 一下就能跑——这正是 §7.4 里"同一个 nvcc 程序能同时跑 GTX 1080 和 RTX 2080"的原因；若只嵌 SASS（`-arch=sm_61` 且不带 PTX），换架构就直接跑不起来
 * **驱动可按新硬件现场优化**：新卡的驱动可能对 JIT 出的 SASS 做比旧时代编译更好的调度
 * **只向前、不向后**：PTX 只能跑在"比它新"的架构上，反过来不行
 
@@ -835,70 +895,21 @@ JIT 结果通常会被驱动缓存（Linux 下在 `~/.nv/ComputeCache`），所�
 
 > 一句话：**PTX 是 GPU 代码的"字节码"（虚拟 ISA，谁都能看懂），SASS 是某张卡的"机器码"（只有那类卡能跑）；nvcc 两个都给你，驱动按需用 SASS 或现场 JIT。**
 
-### 7.4 PyTorch 的编译链（eager）：Python 直接捡现成的 kernel
-
-PyTorch 默认（eager 模式，"eager"= 立即执行，就是最常见的"调用一行算子立刻算完返回结果"）跑一个算子时，**根本没有"编译"这一步**——它走的是"分派 + 加载"：
-
-```
-python 里的 x @ W
-  → ATen dispatcher：按设备（CPU/GPU）、数据类型把算子分派出去
-       （ATen = PyTorch 的底层张量运算库，"dispatcher"是个路由表：
-         一行 x @ W 该由谁实现，由它决定）
-  → 落到一个"早就编译好的" kernel：
-       matmul → cuBLAS；卷积 → cuDNN；FFT → cuFFT；其余 → ATen 内置 CUDA kernel
-  → 这些 kernel 就是"别人用 CUDA C 写好、编译好的 cubin"，随 PyTorch 一起分发
-  → 运行时驱动直接加载即可
-```
-
-所以你在 PyTorch 里完全感知不到"编译"这回事：
-
-```python
-model = GPT().to('cuda')    # 只搬运模型参数，不加载 kernel
-x = torch.randn(32, 2048).to('cuda')
-
-y = model(x)                # 第一次 forward → 触发 kernel 首次加载（慢）
-y2 = model(x2)              # 之后 kernel 已在显存（快多了）
-```
-
-**结论**：eager 模式的 PyTorch 用的是"预编译 kernel"——代码在 PyTorch 发布时就编好了，你只是"触发加载"。所以"首次慢、之后快"的差别，来自 kernel 二进制**加载进显存**，而不是编译。
-
-### 7.5 PyTorch 的编译链（torch.compile）：现场生成 Triton → PTX → SASS
-
-`torch.compile`（PyTorch 2.x）走的是另一条路——**运行时现场生成并编译一段专属 kernel**：
-
-```
-python 模型
-  → TorchDynamo：把 Python 代码"抓"成一张计算图（FX Graph）
-       （Dynamo = PyTorch 自带的"图捕获"工具，把 Python 的一串算子调用改写成一张静态计算图，
-         这样编译器才能整段看、整段优化）
-  → TorchInductor：针对这张图生成一段 Triton kernel 源码
-       （Inductor = "代码生成器"，把图翻译成 Triton 语言的 kernel）
-  → Triton 编译器：Triton 源码 → Triton-IR → TTGIR → LLVM-IR → PTX
-       （Triton-IR / TTGIR / LLVM-IR 是逐层下钻的"中间表示"——编译器内部的过渡形态，
-         就像 javac 的语法树 → 字节码，一步步从人写代码落到机器码）
-  → ptxas：PTX → SASS（cubin）
-  → 之后每次调用直接跑这段 SASS
-```
-
-一句话对比：**eager = 用商店里现成的衣服；torch.compile = 现场量体裁衣**。后者的好处是能把多个算子融合成一段 kernel（省掉中间结果的显存往返），代价是首次调用要花时间"现编"。
-
-**顺带说清 Triton 是什么**：Triton（OpenAI 开源的编译器框架）是一种**用 Python 语法写 GPU 内核**的 DSL。它和 CUDA C 最大的区别是**"块级编程"**——你只描述"一块（tile）数据要做什么计算"，编译器自动把它展开成线程、安排好 shared memory 和合并访问。所以 Inductor 生成的 Triton 代码比手写 CUDA 可读、可控得多，Triton 编译器再把这段块级代码一路编成 PTX → SASS。想自己用 Triton 写内核，见 `docs/07_dsl_kernels.md`（配 `code/07_triton/` 的 SGEMM / FlashAttention 例子）。
-
-### 7.6 TensorRT：离线 AOT 编译，砍掉了 PTX 中间层
+### 7.4 TensorRT：离线 AOT 编译，砍掉了 PTX 中间层
 
 TensorRT 是四大类库之外的另一个角色：它不是"一堆函数库"，而更像一个**编译器**。你把自己训练好的模型交给它，它离线做一顿优化，产出一个**引擎文件（.engine / .plan）**，部署时直接加载这个引擎做推理。这里第一次出现 **AOT**（Ahead-Of-Time，预先编译）——和 §7.3 驱动"运行时 JIT"相反，TensorRT 是在**部署前**就把优化做完了：
 
 ```
 离线阶段（编译模型，较慢，可接受）：
   模型 → 计算图优化（算子融合：多个小算子合成一个大 kernel）
-       → 内核自动调优（选最快实现，类似 04_performance.md 的 Nsight 分析结论）
+       → 内核自动调优（选最快实现，类似 03_cuda_advanced.md 的 Nsight 分析结论）
        → 精度压缩（FP16 / INT8 / INT4：把权重和激活从 32 位浮点压到 16/8/4 位，
           牺牲一点精度换省一半以上的显存和带宽，见附件1精度代号 + 05_llm_acceleration.md §4）
        → 显存规划（复用临时缓冲，省显存）
        → 生成 .engine 引擎文件
 
 部署阶段（加载引擎，快）：
-  .engine → 只做前向推理（无反向、无 autograd，见 06_pytorch_gpu.md §7）
+  .engine → 只做前向推理（无反向、无 autograd，见 04_pytorch_gpu.md §3.4）
 
 典型流水线：
   PyTorch 训练（内部用 cuBLAS/cuDNN）
@@ -955,7 +966,7 @@ TensorRT 是四大类库之外的另一个角色：它不是"一堆函数库"，
 
 > 对应回 §5.1 的类比：**PTX 是"字节码"所以能到处跑（JVM 风格），TensorRT 引擎是"native-image"所以绑定平台（AOT 风格）**——差的就是那层中间表示。
 
-### 7.7 殊途同归：谁在什么时候编译？
+### 7.5 殊途同归：谁在什么时候编译？
 
 | 路线 | 谁写 kernel | 谁编译 | 什么时候编译 | 产物 |
 | --- | --- | --- | --- | --- |
@@ -1037,7 +1048,7 @@ int main() {
 
 # 第四部分：数据结构和类库
 
-> 至此你已经会写、会看懂 kernel 了。这一部分补上"数据"这条腿：GPU 算的数据——**张量**——长什么样、怎么在显存里摆（§9）。然后从"写代码"抬起头看"整个生态"：CUDA 在平台光谱里站哪个位置（§5.1 已讲过）、它自带的四大类库是什么（§10.1）、怎么用它们（§10.2）、和 PyTorch 什么关系（§10.3）、TensorRT 又是干嘛的（§7.6 已讲）。最后用 §11 的常见问题收尾。
+> 至此你已经会写、会看懂 kernel 了。这一部分补上"数据"这条腿：GPU 算的数据——**张量**——长什么样、怎么在显存里摆（§9）。然后从"写代码"抬起头看"整个生态"：CUDA 在平台光谱里站哪个位置（§5.1 已讲过）、它自带的四大类库是什么（§10.1）、怎么用它们（§10.2）、和 PyTorch 什么关系（§10.3）、TensorRT 又是干嘛的（§7.4 已讲）。最后用 §11 的常见问题收尾。
 
 ## 9. 张量：GPU 处理的数据结构
 
@@ -1097,7 +1108,7 @@ int main() {
    核心里最常见的一行：i = threadIdx.x + blockIdx.x * blockDim.x
 
 2. 访问顺序：行优先存储意味着"同一行的相邻元素地址连续"，
-   相邻线程访问相邻地址 = 合并访问（见 03_memory.md §5），
+   相邻线程访问相邻地址 = 合并访问（见 03_cuda_advanced.md §5），
    按列访问则把合并访问破坏掉 → 性能差一个量级。
 ```
 
@@ -1112,14 +1123,14 @@ int main() {
 | 层次 | 内容 | 是什么 | 正文 |
 | --- | --- | --- | --- |
 | **应用层** | PyTorch / llama.cpp / vLLM | 上层框架：写 `x @ y` 就行 | §10.3 |
-| **优化引擎** | TensorRT | 推理阶段：把模型"编译"成专属引擎 | §7.6 |
+| **优化引擎** | TensorRT | 推理阶段：把模型"编译"成专属引擎 | §7.4 |
 | **基础类库** | cuBLAS cuDNN cuFFT cuRAND | 库：优化到接近硬件极限的运算积木 | §10.1~§10.2 |
 | **基础平台** | CUDA（nvcc + Runtime/Driver） | 平台：有编译器 + 运行时 | §5.1 |
 | **硬件** | NVIDIA GPU | 底下跑的卡 | 附件1 |
 
 > 纵向关系：应用层调库，库靠平台运行，平台在硬件上跑。用一句话记层级——**"框架写代码、库算得最快、平台能编译、硬件出算力"**。
 
-各层对应正文：平台（§5.1）→ 库（§10.1）→ 使用案例（§10.2）→ 与 PyTorch 的关系（§10.3）→ 优化引擎（§7.6）。
+各层对应正文：平台（§5.1）→ 库（§10.1）→ 使用案例（§10.2）→ 与 PyTorch 的关系（§10.3）→ 优化引擎（§7.4）。
 
 ### 10.1 CUDA 四大基础类库：cuBLAS / cuDNN / cuFFT / cuRAND
 
@@ -1134,7 +1145,7 @@ cuRAND = GPU 版随机数库：在显存里批量生成随机数
 
 逐个认识：
 
-**cuBLAS（线性代数）**——把"矩阵乘法"优化到极致。BLAS（Basic Linear Algebra Subprograms，基础线性代数子程序）是数值计算最基础的"积木"，cuBLAS 是其 GPU 实现：矩阵乘（SGEMM = 单精度 float 的矩阵乘，GEMM = 通用的矩阵乘）、矩阵-向量乘、点积、范数等。矩阵乘是深度学习/LLM 的最核心算子，cuBLAS 会自动选 tiling 尺寸（tiling = 把大矩阵切成小块分别算，04_performance.md §3 会细讲）、决定用不用 Tensor Core——这正是 04_performance.md 手写 SGEMM 的"终点"。案例：`code/08_cuda_libs/01_cublas_sgemm.cu`。
+**cuBLAS（线性代数）**——把"矩阵乘法"优化到极致。BLAS（Basic Linear Algebra Subprograms，基础线性代数子程序）是数值计算最基础的"积木"，cuBLAS 是其 GPU 实现：矩阵乘（SGEMM = 单精度 float 的矩阵乘，GEMM = 通用的矩阵乘）、矩阵-向量乘、点积、范数等。矩阵乘是深度学习/LLM 的最核心算子，cuBLAS 会自动选 tiling 尺寸（tiling = 把大矩阵切成小块分别算，03_cuda_advanced.md §10 会细讲）、决定用不用 Tensor Core——这正是 03_cuda_advanced.md 手写 SGEMM 的"终点"。案例：`code/08_cuda_libs/01_cublas_sgemm.cu`。
 
 **cuDNN（深度学习算子）**——卷积、池化、激活、归一化、Attention、RNN 等神经网络的"积木"。它的特点是**同一算子有多种算法**，运行时按硬件自动挑最快的（也有 benchmark 模式）。注意：**cuDNN 不随 CUDA Toolkit 一起安装**，需单独下载（§10.3 会看到 PyTorch 自带了一份）。案例：`code/08_cuda_libs/04_cudnn_conv.cu`。
 
@@ -1160,7 +1171,7 @@ cuRAND = GPU 版随机数库：在显存里批量生成随机数
 | **NPP** | 图像/视频处理的"性能原语"（缩放、滤波、色彩转换…） | 图像处理流水线 |
 | **Thrust** | C++ 风格的并行算法库（sort / reduce / transform），像"GPU 版 STL" | 不想手写 kernel 的通用并行 |
 | **CUB** | 底层并行原语（block/reduce/sort 的积木） | 自己写 kernel 时的零件库 |
-| **NCCL** | 多 GPU 之间高速通信（all-reduce 等集合通信） | 分布式训练（见 06 篇 §6） |
+| **NCCL** | 多 GPU 之间高速通信（all-reduce 等集合通信） | 分布式训练（见 04 篇 §6） |
 | **cuBLASLt** | cuBLAS 的"轻量"变体，更细粒度控制矩阵乘 | 想手调 GEMM 性能 |
 
 > 一句话：**"四大"是你要天天打交道的常客，其余是"用到哪张卡、算哪类问题"才翻出来的专工**。本仓库只动手跑过四大（`code/08_cuda_libs/`），其余按需查阅官方文档即可。
@@ -1274,7 +1285,7 @@ cudnnGetConvolutionForwardAlgorithm(...);      // 让库自己挑最快的算法
 
 ### Q6：CUDA、cuDNN、TensorRT 是什么关系？
 
-完整解释见正文 §10.1~§10.3 与 §7.6。一句话速记：
+完整解释见正文 §10.1~§10.3 与 §7.4。一句话速记：
 
 ```
 CUDA      = 基础平台。就像 Windows 系统
@@ -1343,7 +1354,7 @@ TensorRT  = 推理优化引擎。把训练好的模型"编译"成专属加速包
 
 ## 附件2：LLVM IR 介绍
 
-> 这篇附录给"什么是 LLVM IR"一个完整的交代。正文 §7 讲编译链时两次遇到它：§7.2 的 **NVVM IR**（NVIDIA 版 LLVM IR）、§7.5 的 **LLVM-IR**（Triton 编译链的中间层）。很多读者第一次在 CUDA 里看到 IR 会懵，这里把它讲透。
+> 这篇附录给"什么是 LLVM IR"一个完整的交代。正文 §7 的编译链里遇到它：§7.2 的 **NVVM IR**（NVIDIA 版 LLVM IR）；`04_pytorch_gpu.md` §5.4 讲 torch.compile 时也会遇到 **LLVM-IR**（Triton 编译链的中间层）。很多读者第一次在 CUDA 里看到 IR 会懵，这里把它讲透。
 
 ### 1. LLVM 是什么：一个编译器"乐高积木库"
 
@@ -1408,7 +1419,7 @@ NVIDIA 没有另起炉灶写一套编译器，而是**直接基于 LLVM 定制**
 
 - **NVVM IR**（§7.2）：NVIDIA 版的 LLVM IR。`nvcc` 把 `.cu` 的 device 代码先翻译成它，再转成 PTX
 - **PTX**（§7.2）：NVIDIA 的"虚拟 ISA"，架构无关的 GPU 指令集——本质上也是 LLVM 系产物
-- **Triton 编译链**（§7.5）：`Triton-IR → TTGIR → LLVM-IR → PTX`，走到 LLVM-IR 这一步，就是借 LLVM 的优化和后端能力生成 PTX
+- **Triton 编译链**（04 篇 §5.4）：`Triton-IR → TTGIR → LLVM-IR → PTX`，走到 LLVM-IR 这一步，就是借 LLVM 的优化和后端能力生成 PTX
 
 ```
 CUDA C（.cu）→ NVVM IR（NVIDIA 版 LLVM IR）→ PTX → SASS

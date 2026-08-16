@@ -1,11 +1,11 @@
 # =====================================================================
-# 06_pytorch_gpu / ex20_amp.py
+# 04_pytorch_gpu / ex20_amp.py
 # 自动混合精度 AMP：FP32 vs FP16(autocast + GradScaler)
 #
 # 运行（建议有 GPU；无 GPU 会自动降级为 CPU 演示并提示）：
 #   python ex20_amp.py
 #
-# 对应 docs/06_pytorch_gpu.md §4（AMP）
+# 对应 docs/04_pytorch_gpu.md §4.1（AMP）
 #
 # 注意：GTX 1080（Pascal, sm_61）硬件不支持 BF16，BF16 需要 Ampere(sm_80)+。
 #      所以本示例用 FP16 + GradScaler（Pascal 及以上的通用做法）。
@@ -65,7 +65,7 @@ def main():
         t_amp = train_one_epoch(use_amp=True)
         print(f"FP16(AMP) 50 步  : {t_amp:.3f} s")
         print(f"加速比           : {t_fp32 / t_amp:.2f}x")
-        print("说明：FP16 省一半字节 = 省一半带宽 = 吞吐近似翻倍（docs/06 §4）")
+        print("说明：FP16 省一半字节 = 省一半带宽 = 吞吐近似翻倍（docs/04 §4）")
     else:
         print("（跳过 AMP 计时：需要 GPU）")
 

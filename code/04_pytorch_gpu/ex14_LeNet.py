@@ -1,5 +1,5 @@
 # =====================================================================
-# 06_pytorch_gpu / ex14_LeNet.py
+# 04_pytorch_gpu / ex14_LeNet.py
 # LeNet-5 在 MNIST 上的 GPU 训练（卷积神经网络全流程）
 #
 # 运行（有 GPU 优先；无 GPU 自动走 CPU，能跑但慢）：
@@ -13,7 +13,7 @@
 #   3. 完整训练循环：forward -> loss -> backward -> step
 #   4. 简单验证集精度
 #
-# 对应 docs/06_pytorch_gpu.md §2.2（训练循环的标准骨架）
+# 对应 docs/04_pytorch_gpu.md §2.1 / §2.4（训练循环的标准骨架）
 # =====================================================================
 import torch
 import torch.nn as nn

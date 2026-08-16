@@ -6,9 +6,9 @@
 //   nvcc sgemm_naive.cu -o sgemm_naive -arch=sm_61
 //   .\sgemm_naive.exe [M] [N] [K]    # 可选边长，默认 1024
 //
-// 对应文档：docs/04_performance.md §3.1
+// 对应文档：docs/03_cuda_advanced.md §10.1
 //
-// 为什么慢（docs/04_performance.md §3.1）：
+// 为什么慢（docs/03_cuda_advanced.md §10.1）：
 //   每个线程算 1 个输出，要读 A 的 K 个、B 的 K 个 = 2K 次全局内存。
 //   A[i][k] 被 N 个线程重复读、B[k][j] 被 M 个线程重复读 —— 数据复用为零，
 //   算术强度 ≈ 0.25 FLOP/byte，严重 memory-bound。

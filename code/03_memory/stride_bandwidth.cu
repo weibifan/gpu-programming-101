@@ -6,9 +6,9 @@
 //   nvcc stride_bandwidth.cu -o stride_bandwidth -arch=sm_61
 //   .\stride_bandwidth.exe
 //
-// 对应文档：docs/03_memory.md §5（合并访问）。
+// 对应文档：docs/03_cuda_advanced.md §5（合并访问）。
 //
-// 结论（docs/03_memory.md §5.1）：
+// 结论（docs/03_cuda_advanced.md §5.1）：
 //   stride=1   线程 t 读 a[t]        相邻线程相邻地址 -> 1 个 128B 事务 -> 带宽拉满
 //   stride=32  线程 t 读 a[t*32]     相邻线程隔 128 字节 -> 32 个事务 -> 有效带宽暴跌
 //
@@ -92,7 +92,7 @@ int main() {
                strides[si], gbps, gbps / base * 100.0, ms_all[si]);
     }
 
-    printf("\n结论（docs/03_memory.md §5.2）：stride 越大，每个 128B 事务里真正用到的\n");
+    printf("\n结论（docs/03_cuda_advanced.md §5.2）：stride 越大，每个 128B 事务里真正用到的\n");
     printf("字节越少（stride=32 时每事务只用 4B/128B），所以有效带宽随 stride 反比下降——\n");
     printf("这就是\"未合并访问 ≈ 带宽利用率打折扣\"的实测证据。\n");
 

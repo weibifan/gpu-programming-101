@@ -1,5 +1,5 @@
 # =====================================================================
-# 07_triton / sgemm.py
+# 06_dsl_kernels / sgemm.py
 # 用 Triton 写一个矩阵乘 kernel（SGEMM），对比 torch.matmul
 #
 # 运行（AutoDL / 装有 triton + NVIDIA GPU 的机器）：
@@ -8,7 +8,7 @@
 #
 # 对应 docs/05_llm_acceleration.md §8（手写内核思路）
 #
-# 思路（就是 docs/04_performance.md §3 的 tiling，用 Python 表达）：
+# 思路（就是 docs/03_cuda_advanced.md §10 的 tiling，用 Python 表达）：
 #   * 每个 program 算 C 的一个 BLOCK_M x BLOCK_N 小块
 #   * 沿 K 循环，每次把 BLOCK_K 的 A/B 小块搬进"寄存器/共享内存"（由 Triton 自动安排）
 #   * tl.dot 自动选矩阵乘指令

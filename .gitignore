@@ -27,3 +27,6 @@ Thumbs.db
 # 数据文件（大体积/生成物）
 data/**/*.bin
 data/**/*.pt
+
+# Claude Code 本地配置（只留在本机，不推送）
+docs/.claude/

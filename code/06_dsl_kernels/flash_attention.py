@@ -1,5 +1,5 @@
 # =====================================================================
-# 07_triton / flash_attention.py
+# 06_dsl_kernels / flash_attention.py
 # 用 Triton 手写一个 FlashAttention kernel（因果注意力，前向）
 #
 # 运行（AutoDL / 装有 triton + NVIDIA GPU 的机器，head 维需 128 的倍数）：
