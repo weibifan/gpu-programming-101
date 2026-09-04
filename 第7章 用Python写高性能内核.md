@@ -1,32 +1,34 @@
-# 06 用 Python 写高性能内核：Triton 与 TileLang
+# 第7章 用Python写高性能内核：让编译器替你铺线程、搬内存
 
-> 对应里程碑 M5 之后（配合 `code/06_dsl_kernels/`）。前面我们用了两条路写 GPU 程序：**CUDA C 手写内核**（docs/02~03，理解原理）和 **PyTorch 黑盒调用**（docs/04，日常使用）。本篇补上中间那块拼图：**用 Python 语法写接近手写性能的内核**。主角有两个——**Triton**（OpenAI 开源、PyTorch `torch.compile` 的代码生成后端、生态主流）和 **TileLang**（北大团队、构建在 TVM 上、国产新秀）。
->
-> 阅读对象：已经看完 03_cuda_advanced.md 的 tiling 和 05_llm_acceleration.md 的 FlashAttention，想在"自己写内核"这件事上少受 C/C++ 的苦。
+> 本文档补上"用 Python 语法写接近手写性能的 GPU 内核"这块拼图：它站在手写 CUDA C 与 PyTorch 黑盒之间，主角是 **Triton**（OpenAI 开源、PyTorch `torch.compile` 的代码生成后端、生态主流）和 **TileLang**（北大团队、构建在 TVM 上的国产新秀）。**适合已经了解 tiling 与 FlashAttention、想在"自己写内核"这件事上少受 C/C++ 之苦的读者。** 配合 `06_dsl_kernels/` 的代码，你能一步步写出 SGEMM 与 FlashAttention 的 Python 版内核。
 
-**阅读路线**：先建立"DSL 内核编译器"的整体观——它站在哪一层、对标 Java 生态的什么（§1）；然后掌握 **Triton**：定位与现状（§2）、最小语法（§3）、两个实战 SGEMM / FlashAttention（§4）；再看 Triton 的局限，引出 **TileLang**（§5~§7）；最后一张表选型（§8）。
+**本章结构**：第 1 节先建立"DSL 内核编译器"的整体观——它站在哪一层、对标 Java 生态的什么；第 2 节认识 Triton 的定位与现状；第 3 节过一遍 Triton 最小语法；第 4 节上两个实战（SGEMM / FlashAttention）；第 5 节看 Triton 的局限，引出第 6 节的 TileLang 与第 7 节它的现状生态；第 8 节一张表做选型收尾。
 
 ---
 
-## 1. DSL 内核编译器：站在哪一层
+## 第 1 节 DSL 内核编译器：站在哪一层
+
+> 本节回答三件事：写 GPU 程序有哪三条路径、DSL 为什么恰好补上缺的那一块、它在 CUDA 平台栈里站在什么位置（Java 平台类比）。
 
 ### 1.1 三条路径回顾：缺的正是"中间一块"
 
-回顾 docs/04 §1.2 的"用 Python 驱动 GPU 的三条路径"：
+回顾"用 Python 驱动 GPU 的三条路径"：
 
 | 路径 | 代表 | 你写什么 | 共享内存/同步 | 性能 |
 |---|---|---|---|---|
-| 手写内核 | CUDA C（docs/02~03） | 线程级代码 | 手写 `__shared__`/`__syncthreads` | 上限最高 |
+| 手写内核 | CUDA C | 线程级代码 | 手写 `__shared__`/`__syncthreads` | 上限最高 |
 | **写内核但用 Python** | **Triton / TileLang（本篇）** | **块（tile）级代码** | **编译器自动安排** | **接近手写** |
-| 完全托管 | PyTorch（docs/04） | 算子/模型 | 黑盒，管不到 | 库级 |
+| 完全托管 | PyTorch | 算子/模型 | 黑盒，管不到 | 库级 |
 
-**DSL（Domain-Specific Language，领域特定语言）** 就站在中间：保留"自定义高性能算子"的能力，把"怎么铺线程、怎么搬共享内存、怎么选指令"全部交给编译器。
+**一句话定义**：**DSL（Domain-Specific Language，领域特定语言）** 是专为某个领域设计的编程语言；这里特指**让你用 Python 语法写"分块"计算逻辑、而把"怎么铺线程、怎么搬共享内存、怎么选指令"全部交给编译器**的那类语言。
+
+**读法提示**：性能从"手写最高 → 托管最低"，而**共享内存/同步的操心程度**也是"手写最多 → 托管零"。DSL 正好站在中间——保留"自定义高性能算子"的能力，把底层脏活全交给编译器。
 
 > 一句话：**Triton/TileLang = 用 Python 写"分块"逻辑，把"怎么铺线程、怎么搬共享内存"全交给编译器**。上手难度远低于 CUDA C，性能又远高于 PyTorch 的自定义写法。
 
 ### 1.2 它在 CUDA 平台栈里的位置：Java 平台类比
 
-把 CUDA 平台和 Java 平台对齐（编译链详见 docs/02 §7），DSL 编译器恰好补上"最后一格"：
+把 CUDA 平台和 Java 平台对齐，DSL 编译器恰好补上"最后一格"：
 
 | 层级 | CUDA 平台 | Java 平台 |
 |---|---|---|
@@ -40,12 +42,33 @@
 | **DSL + 自带优化编译器** | **Triton / TileLang** | **≈ Scala/Kotlin + GraalVM** |
 
 > **Triton/TileLang ≈ "Scala/Kotlin 语言 + GraalVM 编译器"**：用更简洁的类 Python 语法描述计算意图，由一个更聪明的编译器自动完成优化（内联 / 布局推理 / 流水线）和多后端代码生成（PTX / MUSA / Ascend C）。它不是"又一个语言"，而是**语言 + 编译器 + 自动调优器**的三位一体——这正是它需要靠 GraalVM 全家桶才能类比的原因。
->
-> 对应到 02 篇 §7 的编译链：你写的 DSL 代码 → 编译器生成 PTX（≈ 字节码）→ 驱动 JIT 成 SASS（≈ 机器码）。差别只在"谁、在什么时候做编译"。
+
+**一句话定义（Triton 编译链）**：你写的 DSL 代码 → 编译器生成 PTX（≈ 字节码）→ 驱动 JIT 成 SASS（≈ 机器码）。差别只在"谁、在什么时候做编译"——手写 CUDA C 是编译期编好，PyTorch 是库发布时编好、你只负责加载，而 DSL 是运行时现场编。
+
+```mermaid
+flowchart LR
+    DSL["🐍 DSL 代码<br/>Triton / TileLang"]
+    Comp["🧬 自带优化编译器<br/>MLIR/LLVM / TVM TensorIR"]
+    PTX["📦 PTX<br/>≈ 字节码（架构无关）"]
+    JIT["⚡ 驱动 JIT"]
+    SASS["🖥️ SASS<br/>某张卡的机器码"]
+    DSL --> Comp --> PTX --> JIT --> SASS
+    style DSL fill:#fff3e0,stroke:#f57c00
+    style Comp fill:#fce4ec,stroke:#c62828
+    style PTX fill:#f3e5f5,stroke:#6a1b9a
+    style JIT fill:#e1f5fe,stroke:#1565c0
+    style SASS fill:#e8f5e9,stroke:#2e7d32
+```
+
+**一个类比**：PTX 之于 DSL，就像"乐谱"之于演奏者——DSL 编译器把旋律（计算意图）写成一张**架构无关的乐谱（PTX）**，任何一张卡（乐手）拿到它都能按自己的方式现场演绎（JIT 成 SASS）。所以同一份 Triton/TileLang 代码，换一张新卡不用重写。
 
 ---
 
-## 2. Triton：用 Python 写 GPU 内核
+## 第 2 节 Triton：用 Python 写 GPU 内核
+
+> 本节回答三件事：Triton 用哪三件事就能记住、它 2026 年的现状是什么、为什么用它而不是直接写 CUDA C。
+
+**一句话定义**：**Triton** 是 OpenAI 开源的、让"用 Python 写 GPU 内核"成为可能的 DSL 编译器——你写**块（tile）级**逻辑，它自动铺线程、搬共享内存、选指令。
 
 ### 2.1 三件事帮你记住
 
@@ -55,28 +78,36 @@
 3. 落地层面：编译器自动帮你做 共享内存搬运 + 同步 + 选指令
 ```
 
+用颜色标一下这三件事——**<span style="color:#1565c0">🔵 语言</span>**（写内核用 Python）→ **<span style="color:#c62828">🔴 思想</span>**（写块级代码）→ **<span style="color:#2e7d32">🟢 落地</span>**（编译器干脏活）。
+
+**一个类比**：把 CUDA C 想成**手动挡**（你管离合、档位、油门），Triton 想成**自动挡**（你说"我要开到那个路口"，换挡、踩离合交给变速箱）。自动挡省心，但你也失去"弹射起步"这种极致操控——对应后面第 5 节的局限。
+
 ### 2.2 现状（2026）：已是生态标配
 
 - **归属**：由 OpenAI 开源，现托管于 **triton-lang 组织**，MIT 协议，Meta / AMD / NVIDIA / OpenAI / Intel / Google 等共同贡献
 - **版本**：3.7.x（2026 年中），编译器后端已整体迁移到 **MLIR / LLVM**
 - **硬件后端**：NVIDIA（CC 8.0+，Ampere 起）、AMD（ROCm 6.2+）；CPU 后端开发中
-- **最大用户**：PyTorch `torch.compile` 的 **Inductor** 后端现场生成 Triton 代码（docs/04 §5）；FlashAttention、SGLang、vLLM 等也大量用它写自定义算子
+- **最大用户**：PyTorch `torch.compile` 的 **Inductor** 后端现场生成 Triton 代码；FlashAttention、SGLang、vLLM 等也大量用它写自定义算子
 - **调试**：`TRITON_INTERPRET=1` 可进 Python 解释器、打断点，无 GPU 也能跑通逻辑
 
 ### 2.3 为什么用 Triton，而不是直接写 CUDA C？
 
 - **不用管线程**：CUDA C 里你要自己算 `blockIdx*blockDim+threadIdx`，还要手动 `__shared__` + `__syncthreads()`。Triton 里你只描述"这块 tile 干什么"，编译器把它展开成线程。
-- **自动选指令**：`tl.dot` 会自动用 FFMA 甚至 Tensor Core（A100 上），不用像 03 篇手写 register tiling 那样抠细节。
+- **自动选指令**：`tl.dot` 会自动用 FFMA 甚至 Tensor Core（A100 上），不用像手写 register tiling 那样抠细节。
 - **自动调优**：同一份代码，改几个 `BLOCK_*` 编译期常量就能换 tile 大小，编译器为当前硬件重新生成内核。
 - **不牺牲多少性能**：官方 SGEMM / FlashAttention 教程都能跑到对应手写/库的 7~9 成。
 
-> 代价：你只能表达"编译器的目标语言能表达的东西"——极致的指令级优化（比如 03 篇 §10.3 那种手工寄存器复用）仍然要靠 CUDA C。但 95% 的"自定义高性能算子"，Triton 都够用了。
+> 代价：你只能表达"编译器的目标语言能表达的东西"——极致的指令级优化（比如手工寄存器复用那种）仍然要靠 CUDA C。但 95% 的"自定义高性能算子"，Triton 都够用了。
 
 ---
 
-## 3. Triton 语法速览：最小例子
+## 第 3 节 Triton 语法速览：最小例子
 
-Triton 内核用 `@triton.jit` 装饰，运行在 GPU 上。看一个向量加（对照 `code/00_hello/vector_add.cu`）：
+> 本节回答两件事：一个最小 Triton 内核长什么样、五个关键语法各是干什么的、和 CUDA C 怎么对号入座。
+
+**一句话定义（Triton language）**：`triton.language`（习惯 `import triton.language as tl`）是 Triton 自带的"GPU 数学库"，提供 `tl.load`、`tl.store`、`tl.dot`、`tl.arange` 这些**块级原语**——每个都是"对一整块数据操作"，不是对单个元素。
+
+Triton 内核用 `@triton.jit` 装饰，运行在 GPU 上。看一个向量加（对照 `00_hello/vector_add.cu`）：
 
 ```python
 import triton
@@ -105,15 +136,19 @@ add_kernel[(n + 255) // 256](x, y, out, n, BLOCK=256)   # 网格 = 块数，BLOC
 | `tl.load / tl.store` | 带 mask 的批量读写 | 指针 + 边界判断 |
 | `BLOCK: tl.constexpr` | **编译期常量**：换一个值就重新编译一次 | `#define` / 模板参数 |
 
+**一个生活化比喻**：`tl.arange` + `tl.load` 就像"叫一整箱快递搬进仓库"——你不是一个个去拿（CUDA C 的循环），而是说"这一箱都给我"，编译器负责把这箱拆给 32 个搬运工（warp）并安排最优路线（合并访问）。
+
 > 注意心智转变：**CUDA C 里你写"一个线程干什么"，Triton 里你写"一块数据干什么"**。`offs`、`x`、`y` 都是长度 BLOCK 的向量，编译器负责把它们拆给 32 线程的 warp 并做合并访问。
 
 ---
 
-## 4. Triton 实战
+## 第 4 节 Triton 实战
 
-### 4.1 SGEMM（对照 `code/06_dsl_kernels/sgemm.py`）
+> 本节回答两件事：SGEMM 用 Triton 怎么写、FlashAttention 用 Triton 怎么写，以及它们各自"为什么快"。
 
-这就是 03_cuda_advanced.md §10 的 tiling，用 Triton 表达只有三步：
+### 4.1 SGEMM（对照 `06_dsl_kernels/sgemm.py`）
+
+**一句话定义（分块 tiling）**：把一个大矩阵乘拆成很多个小块（tile）来算——每个块只碰自己需要的 A/B 小片，块内数据能塞进共享内存/寄存器反复复用，少读全局内存。这就是手写 CUDA 里做过的 tiling，用 Triton 表达只有三步：
 
 ```python
 @triton.jit
@@ -144,9 +179,11 @@ def matmul_kernel(a_ptr, b_ptr, c_ptr, M, N, K,
     tl.store(c_ptrs, acc, mask=c_mask)
 ```
 
-**和 03 篇手写版的对应关系**：
+三步用颜色标一下：**<span style="color:#1565c0">🔵 定位</span>**（`pid_m` / `pid_n` 决定输出小块）→ **<span style="color:#2e7d32">🟢 tiling</span>**（沿 K 循环搬小块）→ **<span style="color:#c62828">🔴 累加</span>**（`tl.dot` 自动选矩阵乘指令）。
 
-| 03 篇手写（sgemm_shared / sgemm_tiled） | Triton 版 |
+**和手写 CUDA C 的对应关系**：
+
+| 手写 CUDA（sgemm_shared / sgemm_tiled） | Triton 版 |
 |---|---|
 | `blockIdx.x/blockIdx.y` 决定输出小块 | `pid_m / pid_n` |
 | 手写 `__shared__ As[BLOCK][BLOCK+1]` + 拷贝循环 | `tl.load` 一条语句（编译器搬到共享内存） |
@@ -154,13 +191,13 @@ def matmul_kernel(a_ptr, b_ptr, c_ptr, M, N, K,
 | 手写 `sum += As[ty][kk]*Bs[kk][tx]` | `tl.dot(a, b, acc)` |
 | padding 防 bank conflict | 编译器自动处理 |
 
-> 额外一提 `GROUP_SIZE_M`：它让**同一行的小块挨着调度**，相邻块共享同一段 A 的 K 行，L2 命中率更高——这是 03 篇 §12"四板斧"之外的一招"调度优化"，写 `sgemm.py` 时可以直接对比有无。
+> 额外一提 `GROUP_SIZE_M`：它让**同一行的小块挨着调度**，相邻块共享同一段 A 的 K 行，L2 命中率更高——这是手写优化几板斧之外的一招"调度优化"，写 `sgemm.py` 时可以直接对比有无。
 
-预期：`code/06_dsl_kernels/sgemm.py` 跑 4096³，正确性对 torch 通过，速度约为 cuBLAS 的 **70%~90%**。
+预期：`06_dsl_kernels/sgemm.py` 跑 4096³，正确性对 torch 通过，速度约为 cuBLAS 的 **70%~90%**。
 
-### 4.2 FlashAttention（对照 `code/06_dsl_kernels/flash_attention.py`）
+### 4.2 FlashAttention（对照 `06_dsl_kernels/flash_attention.py`）
 
-这就是 05_llm_acceleration.md §3 的 FlashAttention，tiling + 在线 softmax 各就位：
+这就是 FlashAttention 本身，tiling + 在线 softmax 各就位：
 
 ```python
 acc = tl.zeros((BLOCK_M, BLOCK_D), dtype=tl.float32)
@@ -183,22 +220,24 @@ for start_n in range(0, (start_m + 1) * BLOCK_M, BLOCK_N):
 acc = acc / l_i[:, None]                                      # 最后归一
 ```
 
-**为什么这就是 05 篇 §3.2 说的"IO-aware"**：`p`（softmax 权重）这个 `[BLOCK_M, BLOCK_N]` 的中间矩阵**从头到尾只活在寄存器/共享内存里**，从不写回全局内存——整个 kernel 对显存的读写只有 Q/K/V 各一遍。而 05 篇 §3.1 手写版要先存整个 `[T, T]` 的 S。
+**为什么这就是"IO-aware"**：`p`（softmax 权重）这个 `[BLOCK_M, BLOCK_N]` 的中间矩阵**从头到尾只活在寄存器/共享内存里**，从不写回全局内存——整个 kernel 对显存的读写只有 Q/K/V 各一遍。而朴素版手写 FlashAttention 要先存整个 `[T, T]` 的 S。主循环可概括为：**Q 块 → `tl.dot(q,k)×scale` → 因果掩码 → 在线 softmax（running max + running sum）→ `acc` 累加（`p` 从不落全局内存）→ 最后 `acc/l_i` 归一**。
 
 **两个容易写错的地方**：
 
 1. **`tl.exp` 用自然对数域**：`m_i/l_i` 统计量、`alpha`、最终 `acc / l_i` 全部用自然指数/对数，才能和 PyTorch 的 `softmax` 严格一致。用 `tl.math.exp2`（基 2）等价于给 logits 乘了 `ln2`，结果会系统性偏差。
 2. **head 维（BLOCK_D）必须是 2 的幂**（代码里用 128），`tl.arange` 不接受任意长度。
 
-预期：`code/06_dsl_kernels/flash_attention.py` 跑 `[4,8,2048,128]` 因果注意力，与 `F.scaled_dot_product_attention(is_causal=True)` 误差 < 1e-2，速度接近 `F.sdpa`。
+预期：`06_dsl_kernels/flash_attention.py` 跑 `[4,8,2048,128]` 因果注意力，与 `F.scaled_dot_product_attention(is_causal=True)` 误差 < 1e-2，速度接近 `F.sdpa`。
 
 ---
 
-## 5. Triton 的局限：为什么还需要 TileLang
+## 第 5 节 Triton 的局限：为什么还需要 TileLang
+
+> 本节回答一件事：Triton 这么好，为什么还需要一个 TileLang？三重困境是什么。
 
 Triton 很好，但手写复杂算子时仍有三重困境（这也正是 TileLang 诞生的背景）：
 
-1. **CUDA 开发门槛极高**：CUDA C++ / PTX 需要深入理解线程模型、共享内存、Bank Conflict、Tensor Core 等底层细节，一个高性能 GEMM 内核动辄数百甚至上千行（03 篇你亲自写过）。
+1. **CUDA 开发门槛极高**：CUDA C++ / PTX 需要深入理解线程模型、共享内存、Bank Conflict、Tensor Core 等底层细节，一个高性能 GEMM 内核动辄数百甚至上千行（手写过的都懂）。
 2. **Triton 这类高层 DSL 仍有局限**：`tl.arange` 长度必须是 2 的幂；线程绑定、数据布局（layout）基本由编译器黑箱决定，想显式控制很费劲；对 **MLA（Multi-head Latent Attention）、FP8 混合精度**等复杂算子，编译器难以自动生成最优代码。
 3. **硬件碎片化**：NVIDIA、AMD、华为昇腾、摩尔线程的指令集差异巨大，每适配一种硬件几乎要重写一遍算子——Triton 的官方后端目前只有 NVIDIA / AMD。
 
@@ -206,11 +245,13 @@ Triton 很好，但手写复杂算子时仍有三重困境（这也正是 TileLa
 
 ---
 
-## 6. TileLang：可编程调度的块级 DSL
+## 第 6 节 TileLang：可编程调度的块级 DSL
+
+> 本节回答三件事：TileLang 是什么、它的核心设计理念"把数据流和调度解耦"怎么理解、核心原语长什么样。
 
 ### 6.1 定位与背景
 
-**TileLang**（Tile Language）是专为 AI 算子设计的领域特定语言，核心目标是：**既保留 Triton 的易用性，又给你"调度（scheduling）"的细粒度控制**。
+**一句话定义**：**TileLang**（Tile Language）是专为 AI 算子设计的领域特定语言，核心目标是：**既保留 Triton 的易用性，又给你"调度（scheduling）"的细粒度控制**。
 
 | 基本信息 | 内容 |
 |:---|:---|
@@ -226,6 +267,8 @@ Triton 很好，但手写复杂算子时仍有三重困境（这也正是 TileLa
 
 Triton 里"怎么并行"由编译器全包；TileLang 则把它拆开：**你描述数据流（dataflow），编译器给默认调度；不满意时可以手动干预调度（scheduling）**。
 
+**一个类比**：Triton 像"网约车"——你说目的地（数据流），平台（编译器）全权规划路线（调度）；TileLang 像"自驾 + 可改导航"——默认路线照常推荐，但你不满意就能手动绕路（改流水线、改线程绑定）。
+
 - **Tile 级抽象**：核心编程对象是 **Tile（张量分块）**，贯穿整个内存层级：`Global → Shared → Register（fragment）→ Compute → Accumulator → Global`
 - **声明式语法 + 自动优化**：你写"算什么东西"，编译器自动做布局推理、并行推理、循环转换、软件流水线、线程绑定
 - **三种使用模式**，按能力分层：
@@ -235,6 +278,8 @@ Triton 里"怎么并行"由编译器全包；TileLang 则把它拆开：**你描
 | **Beginner** | 入门用户 | 极致简洁，无需关注硬件细节 |
 | **Developer** | 中级开发者 | 可控制 Shared Memory、Register Fragment 等资源 |
 | **Expert** | 高性能专家 | 显式控制 Pipeline、Warp 级原语，追求极致性能 |
+
+能力梯度：**<span style="color:#2e7d32">🟢 Beginner</span>** 只管写 → **<span style="color:#f57c00">🟠 Developer</span>** 可管资源 → **<span style="color:#c62828">🔴 Expert</span>** 全显式控制。
 
 ### 6.3 核心原语 + 一个 GEMM 例子
 
@@ -277,7 +322,9 @@ def matmul(M, N, K, block_M=128, block_N=128, block_K=64, dtype='float16'):
 
 ---
 
-## 7. TileLang 的现状与生态（2026）
+## 第 7 节 TileLang 的现状与生态（2026）
+
+> 本节回答三件事：TileLang 技术现状到哪一步、性能数字怎么理解（别神化）、产业里谁在用。
 
 ### 7.1 技术现状
 
@@ -304,7 +351,9 @@ ICLR 2026 论文（《TileLang: Bridge Programmability and Performance in Modern
 
 ---
 
-## 8. 选型：Triton vs TileLang vs 手写 CUDA
+## 第 8 节 选型：Triton vs TileLang vs 手写 CUDA
+
+> 本节回答一件事：三套方案各适合什么场景，怎么选。
 
 | 维度 | CUDA C++ / PTX | Triton | **TileLang** |
 |:---|:---|:---|:---|
@@ -317,20 +366,37 @@ ICLR 2026 论文（《TileLang: Bridge Programmability and Performance in Modern
 | **生态 / 成熟度** | 最成熟 | **最主流**（torch.compile 后端） | 新秀，增长快 |
 | **学习门槛** | 极高 | 中等 | 低（Beginner 模式） |
 
-**怎么选（结合本仓库）**：
+```mermaid
+flowchart TD
+    Q{"你的需求是？"}
+    Q --> A["💡 想学内核思路 / 跑通第一个融合算子"]
+    A --> Triton["🐍 Triton<br/>教程多、跟 torch.compile 同源"]
+    Q --> B["🧩 要写复杂算子、受困于 Triton 黑箱布局"]
+    B --> TileLang["📐 TileLang<br/>更细的调度控制、多后端"]
+    Q --> C["🚀 要极致指令级性能 / 单一 NVIDIA 卡"]
+    C --> Cuda["⚙️ CUDA C"]
+    Q --> D["🎁 只是用 PyTorch"]
+    D --> Pyt["🎉 直接用 PyTorch 就够了"]
+    style Triton fill:#fff3e0,stroke:#f57c00
+    style TileLang fill:#f3e5f5,stroke:#6a1b9a
+    style Cuda fill:#fce4ec,stroke:#c62828
+    style Pyt fill:#e8f5e9,stroke:#2e7d32
+```
 
-- **想学内核思路 / 跑通第一个融合算子** → **Triton**（`code/06_dsl_kernels/`，教程多、跟 torch.compile 同源）
+**怎么选**：
+
+- **想学内核思路 / 跑通第一个融合算子** → **Triton**（`06_dsl_kernels/`，教程多、跟 torch.compile 同源）
 - **要写复杂算子且受困于 Triton 的"黑箱布局"** → **TileLang**（更细的调度控制、多后端）
-- **要极致指令级性能 / 目标硬件是单一 NVIDIA 卡** → CUDA C（03 篇那条路）
-- **只是用 PyTorch** → 你大概率不需要本篇（04 篇已够）
+- **要极致指令级性能 / 目标硬件是单一 NVIDIA 卡** → CUDA C
+- **只是用 PyTorch** → 你大概率不需要本篇
 
 ### 本篇与代码的对应
 
 | 概念 | 对应代码 |
 |---|---|
-| 最小语法（§3） | `code/06_dsl_kernels/sgemm.py` 里的 `@triton.jit`/`tl.arange`/`tl.load` |
-| SGEMM tiling（§4.1） | `code/06_dsl_kernels/sgemm.py`（对照 `code/04_optimization/` 三版手写） |
-| FlashAttention（§4.2） | `code/06_dsl_kernels/flash_attention.py` |
-| 在线 softmax / 因果掩码 | `code/06_dsl_kernels/flash_attention.py` 主循环 |
+| 最小语法（§3） | `06_dsl_kernels/sgemm.py` 里的 `@triton.jit`/`tl.arange`/`tl.load` |
+| SGEMM tiling（§4.1） | `06_dsl_kernels/sgemm.py`（对照 `04_optimization/` 三版手写） |
+| FlashAttention（§4.2） | `06_dsl_kernels/flash_attention.py` |
+| 在线 softmax / 因果掩码 | `06_dsl_kernels/flash_attention.py` 主循环 |
 
-> 下一篇可以回到 `docs/05_llm_acceleration.md` 的 M6 计划：在 A100/4090D 上把 `code/06_dsl_kernels/` 跑起来，和官方 FlashAttention、llama.cpp/vLLM 做吞吐对比——学到这里，"从原理到应用"的闭环就完整了。
+> 接下来可以把 `06_dsl_kernels/` 里的代码在 A100/4090D 上跑起来，和官方 FlashAttention、llama.cpp/vLLM 做吞吐对比——学到这里，"从原理到应用"的闭环就完整了。

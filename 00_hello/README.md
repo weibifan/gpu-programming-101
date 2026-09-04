@@ -6,7 +6,7 @@
 
 ## 编译 / 运行
 
-远端 Win10（需 MSVC + CUDA 11.6，见 `docs/01_environment.md`）：
+远端 Win10（需 MSVC + CUDA 11.6，见 `第2章 环境搭建.md`）：
 
 ```powershell
 # 先加载 MSVC x64 环境（否则 nvcc 找不到 cl.exe/头文件/库），再编译
@@ -33,7 +33,7 @@ nvcc vector_add.cu -o vector_add.exe
 CPU 内存准备数据 → cudaMemcpy(→显存) → vec_add<<<blocks, threads>>> → cudaMemcpy(←显存) → 比对校验
 ```
 
-对应文档：`docs/02_cuda_basics.md` §5.2 / §6.1。
+对应文档：`第3章 CUDA编程基础.md` §5.2 / §6.1。
 
 ## 核心一行：全局线程编号
 
@@ -60,7 +60,7 @@ if (i < n) {              // 防越界
 ```
 
 - 线程 0 算 `c[0]`，线程 542 算 `c[542]`……各干各的，天然并行
-- 若 `n` 不能被 `blockDim` 整除（如 N=510、blockDim=128 → 4 blocks=512 线程），越界的线程靠 `if (i < n)` 拦下——同款演示见 `code/01_threads/index_1d.cu`
+- 若 `n` 不能被 `blockDim` 整除（如 N=510、blockDim=128 → 4 blocks=512 线程），越界的线程靠 `if (i < n)` 拦下——同款演示见 `01_threads/index_1d.cu`
 
 > 一句话：这行把"我该处理哪个数据"从线程坐标换算出来。要并行多少份数据就铺多少个线程，公式不变。
 

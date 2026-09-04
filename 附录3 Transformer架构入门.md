@@ -1,12 +1,12 @@
-# 附件3：Transformer 架构入门
+# 附录3：Transformer 架构入门
 
-> **对应里程碑**：M5（LLM 专题）的**前置背景**。05 篇直接抛出 `Q = X @ Wq`、KV cache、FlashAttention，但没讲过 **attention 和 Transformer 到底是什么**——这篇补齐。
+> **对应里程碑**：M5（LLM 专题）的**前置背景**。LLM 篇直接抛出 `Q = X @ Wq`、KV cache、FlashAttention，但没讲过 **attention 和 Transformer 到底是什么**——这篇补齐。
 >
-> **读者假设**：已学完 04 篇（会用 nn.Module 搭 MLP、跑训练循环、懂 autograd），会做矩阵乘（03 篇手写过 SGEMM 的 tiling），但**没接触过 attention / Transformer**。
+> **读者假设**：已学完 PyTorch 篇（会用 nn.Module 搭 MLP、跑训练循环、懂 autograd），会做矩阵乘（kernel 篇手写过 SGEMM 的 tiling），但**没接触过 attention / Transformer**。
 >
-> **阅读时机**：04 之后、05 之前。05 篇会在 §1~§3 大量引用这里的组件名。
+> **阅读时机**：04 之后、05 之前。LLM 篇会在 §1~§3 大量引用这里的组件名。
 >
-> ⚠️ **公式说明**：本文数学公式用 LaTeX 书写，需支持公式渲染的阅读器（与 附件2 相同）。
+> ⚠️ **公式说明**：本文数学公式用 LaTeX 书写，需支持公式渲染的阅读器（与 附录2 相同）。
 
 **阅读路线**：先建立直觉——大模型到底是什么（§1）；再拆最底层的零件：词怎么变数字（§2）、注意力（§3~§5）、一个 block 怎么组装（§6）；然后用**两个完整架构**把零件拼起来看（§6 早期 Transformer、§7 nanoChat）；最后收尾挂回 05 的加速专题（§8）。
 
@@ -50,7 +50,7 @@
 
 自己生成的词不断拼回输入、再预测，这叫**自回归（autoregressive）生成**——"自"= 用自己的输出当输入。
 
-> ⚠️ 这个"一步步蹦"是 05 篇一切性能问题的根源：**prefill**（一次性并行算完整个 prompt 的注意力）还算便宜；**decode**（一次只算一个新词，前面算过的不想重算）→ 引出了 KV cache。读 05 篇 §1.4~§1.5 时你会看到它。
+> ⚠️ 这个"一步步蹦"是 LLM 篇一切性能问题的根源：**prefill**（一次性并行算完整个 prompt 的注意力）还算便宜；**decode**（一次只算一个新词，前面算过的不想重算）→ 引出了 KV cache。读 LLM 篇 §1.4~§1.5 时你会看到它。
 
 ### 1.4 "大"在哪
 
@@ -168,7 +168,7 @@ C 程序员再熟悉不过的类比：**普通的哈希表是"硬"查表，atten
 
 $$Attention(Q,K,V) = \mathrm{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V$$
 
-（记号与 附件2 §7 一致：$Q,K,V$ 是三个线性投影，$S$ 是得分矩阵，$P$ 是 softmax 权重，$O$ 是输出。那里手算过这里的**反向**；本篇讲**正向**。）
+（记号与 附录2 §7 一致：$Q,K,V$ 是三个线性投影，$S$ 是得分矩阵，$P$ 是 softmax 权重，$O$ 是输出。那里手算过这里的**反向**；本篇讲**正向**。）
 
 前两步算出形状 `[T, T]` 的"相关度矩阵"，后两步做加权汇总：
 
@@ -178,7 +178,7 @@ $$P = \mathrm{softmax}(S,\ \text{dim}=-1) \qquad (2)\ \text{每行归一化成�
 
 $$O = P\,V \qquad (3)\ \text{加权求和：按权重混合所有 value}$$
 
-对应到 03 篇：**第 (1) 步 `Q @ K^T` 就是一次矩阵乘**——你在 03 篇手写过 SGEMM，这里的"相关度矩阵"本质就是它在 Transformer 里的现身。FlashAttention（05 篇 §3）优化的正是这个"大矩阵"的带宽问题。
+对应到 kernel 篇：**第 (1) 步 `Q @ K^T` 就是一次矩阵乘**——你在 kernel 篇手写过 SGEMM，这里的"相关度矩阵"本质就是它在 Transformer 里的现身。FlashAttention（LLM 篇 §3）优化的正是这个"大矩阵"的带宽问题。
 
 > 一个位置输出：**"我把序列里所有位置的内容，按'我和它有多相关'加权混在一起。"** 这就是注意力的全部。
 
@@ -301,7 +301,7 @@ class Block(nn.Module):
 
 ### 5.4 FFN（MLP）：每个位置各自的"思考"
 
-FFN 就是一个两层的全连接（你在 04 篇的 MLP 里见过 Linear + ReLU）：
+FFN 就是一个两层的全连接（你在 PyTorch 篇的 MLP 里见过 Linear + ReLU）：
 
 $$FFN(x) = W_2\,\sigma(W_1 x + b_1) + b_2 \qquad \text{（先放大再压缩）}$$
 
@@ -328,7 +328,7 @@ token id 序列 [B, T]
   → softmax         → 下一个词的概率分布（§1.1 的"猜下一个词"）
 ```
 
-> 可跑版：`code/04_pytorch_gpu/ex22_minigpt.py`（10 万参数不到的玩具 GPT——CPU 上 400 步约 3 秒训完就能生成文字，每个组件都注释了对应本节编号）。
+> 可跑版：`04_pytorch_gpu/ex22_minigpt.py`（10 万参数不到的玩具 GPT——CPU 上 400 步约 3 秒训完就能生成文字，每个组件都注释了对应本节编号）。
 
 > 整个模型的骨架就三样：**embedding 进出 + N 个 block 堆叠 + 最后投影回词表**。全部组件你已经学完。
 
@@ -382,7 +382,7 @@ token id 序列 [B, T]
 
 翻译训练如果按推理那样"一个词一个词生成再纠错"，太慢且易错。**教师强制（teacher forcing）**：训练时**直接把标准答案的右移一位**当解码器输入，一次并行算整句，loss 对比每个位置的预测和标准答案。推理时没有标准答案，才退回"自己蹦"。
 
-> 一句话：**训练用标准答案喂（并行、快、稳），推理用自己生成的回填（自回归）。** 05 篇讲 KV cache 时你会再见到这个对比。
+> 一句话：**训练用标准答案喂（并行、快、稳），推理用自己生成的回填（自回归）。** LLM 篇讲 KV cache 时你会再见到这个对比。
 
 ### 6.5 为什么后来 GPT 砍掉编码器、只留解码器
 
@@ -398,7 +398,7 @@ token id 序列 [B, T]
 
 ### 7.1 定位
 
-nanoChat（karpathy/nanochat）是一个**刻意做小、做简单的 decoder-only 聊天模型**：约 0.3B 参数（12 层 × 768 维），单卡 4090/A100 就能训练和推理。它是本仓库 05 篇的**部署案例主角**（05 篇 §5 讲怎么把它喂给 llama.cpp）。
+nanoChat（karpathy/nanochat）是一个**刻意做小、做简单的 decoder-only 聊天模型**：约 0.3B 参数（12 层 × 768 维），单卡 4090/A100 就能训练和推理。它是本仓库 LLM 篇的**部署案例主角**（LLM 篇 §5 讲怎么把它喂给 llama.cpp）。
 
 它保留了 GPT 的一切骨架（§5.5 那套），但每一处细节都换成"更省、更稳、更现代"的选择。**用案例1 当参照系，nanoChat 的每个设计决定都看得懂。**
 
@@ -450,11 +450,11 @@ logits = self.lm_head(x)          # ⑤ 投影回词表 → 下一个词的打�
 
 **③ ReLU² FFN**——`F.relu(x).square()`：先过 ReLU（负值清零），再整体平方。数学上等价 $x\cdot\mathrm{relu}(x)$，简单、无门控分支。
 
-> ⚠️ **一个只有工程细节会撞上的坑**（05 篇 §5 会展开）：ReLU² 的激活值**最大可达 8.8 万**，超过 FP16 上限 65504——用 fp16 会静默溢出成 NaN（加载成功、输出全错）。所以 nanoChat 必须用 **bf16**（指数范围和 FP32 一样），这也是 02 篇提到的"BF16 需要 Ampere（sm_80+）"的原因。
+> ⚠️ **一个只有工程细节会撞上的坑**（LLM 篇会展开）：ReLU² 的激活值**最大可达 8.8 万**，超过 FP16 上限 65504——用 fp16 会静默溢出成 NaN（加载成功、输出全错）。所以 nanoChat 必须用 **bf16**（指数范围和 FP32 一样），这也是 GPU 基础篇提到"BF16 需要 Ampere（sm_80+）"的原因。
 
 **④ 无 bias**——所有 `Linear(bias=False)`。bias 在归一化（RMSNorm）存在时本来就冗余，去掉省参数、降过拟合。
 
-**⑤ GQA（Grouped-Query Attention）**——多个查询头**共享**同一组 K/V 头：Q 有 6 头，K/V 只有 6 头（这里的 `n_kv_head = n_head`，即每个 Q 头一组，退化为 MHA；若 `n_kv_head < n_head` 就是真正的分组）。共享 KV 头意味着 **KV cache 变小**——直接对接 05 篇 §6.4"GQA 专门用来减小 KV cache"。
+**⑤ GQA（Grouped-Query Attention）**——多个查询头**共享**同一组 K/V 头：Q 有 6 头，K/V 只有 6 头（这里的 `n_kv_head = n_head`，即每个 Q 头一组，退化为 MHA；若 `n_kv_head < n_head` 就是真正的分组）。共享 KV 头意味着 **KV cache 变小**——直接对接 LLM 篇 §6.4"GQA 专门用来减小 KV cache"。
 
 **⑥ 解耦 embedding 与输出头**——`wte`（词→向量）和 `lm_head`（向量→词）是**两份独立权重**（早期 Transformer 论文建议共享以省参，但 nanoChat 不共享），这样两者可以**配不同的学习率**（embedding 0.2 vs 输出头 0.004），训练更稳。
 
@@ -471,21 +471,21 @@ logits = self.lm_head(x)          # ⑤ 投影回词表 → 下一个词的打�
 | backout（输出前减去中间层残差） | 去掉低层特征再投影，logits 更干净 |
 | logit softcap（$15\,\tanh(x/15)$） | 把 logits 压到 ±15，防训练后期爆炸 |
 
-### 7.4 三个和 05 篇直接挂钩的省钱点
+### 7.4 三个和 LLM 篇直接挂钩的省钱点
 
-把 7.3 的差异按"05 篇的加速视角"重排，nanoChat 每个设计都在为推理省钱：
+把 7.3 的差异按"LLM 篇的加速视角"重排，nanoChat 每个设计都在为推理省钱：
 
-| nanoChat 设计 | 省的是什么 | 05 篇对应 |
+| nanoChat 设计 | 省的是什么 | LLM 篇对应 |
 |---|---|---|
 | **GQA**（⑤） | KV cache 变小 | §2 KV cache、§6.4 |
 | **滑动窗口**（⑦） | 每步要读的 KV 变少 | §2.2 KV cache 显存 |
 | **RoPE**（①） | 相对位置编码，长上下文更稳 | §1.4 长上下文很贵 |
 
-> 你会发现：**"架构怎么设计"和"推理怎么加速"是同一件事的两面**——模型结构决定 KV cache 大小，KV cache 决定 decode 速度。这正是 05 篇的核心论点。
+> 你会发现：**"架构怎么设计"和"推理怎么加速"是同一件事的两面**——模型结构决定 KV cache 大小，KV cache 决定 decode 速度。这正是 LLM 篇的核心论点。
 
-### 7.5 与仓库的关系：05 篇为什么拿它当"非标准架构"案例
+### 7.5 与仓库的关系：LLM 篇为什么拿它当"非标准架构"案例
 
-nanoChat 不是 HF `transformers` 标准结构（它魔改了 FFN、加了 GQA 等），所以 05 篇 §5 用它演示了完整部署链路：
+nanoChat 不是 HF `transformers` 标准结构（它魔改了 FFN、加了 GQA 等），所以 LLM 篇 §5 用它演示了完整部署链路：
 
 ```
 nanoChat checkpoint ──► convert_nanochat_to_gguf（自写转换脚本）
@@ -494,23 +494,23 @@ nanoChat checkpoint ──► convert_nanochat_to_gguf（自写转换脚本）
                       ──► GGUF 量化（可选）
 ```
 
-**ReLU² → bf16 → 自写转换脚本**，这一串全都源于它的"非标准"架构——你在 7.3 学到的每一个差异，都在 05 篇变成了一个部署时要处理的坑。
+**ReLU² → bf16 → 自写转换脚本**，这一串全都源于它的"非标准"架构——你在 7.3 学到的每一个差异，都在 LLM 篇变成了一个部署时要处理的坑。
 
 ## 8. 收尾：把 Transformer 挂回全仓库
 
 ### 8.1 你现在的完整视野
 
 ```
-04 篇（PyTorch）：  你会搭 nn.Module 的 MLP、跑训练循环
+PyTorch 篇：        你会搭 nn.Module 的 MLP、跑训练循环
                    ↕
-本附件（架构）：    你会看懂 Transformer：词→数字 → 注意力 → block → 堆叠成 LLM
+本附录（架构）：    你会看懂 Transformer：词→数字 → 注意力 → block → 堆叠成 LLM
                    ↕
-05 篇（加速）：     你会懂为什么它慢（内存墙）、怎么加速（KV cache / FlashAttention / 量化 / 引擎）
+LLM 篇（加速）：    你会懂为什么它慢（内存墙）、怎么加速（KV cache / FlashAttention / 量化 / 引擎）
 ```
 
 ### 8.2 每个加速手段，现在都有落点了
 
-| 05 篇的概念 | 对应的 Transformer 结构 | 为什么需要 |
+| LLM 篇的概念 | 对应的 Transformer 结构 | 为什么需要 |
 |---|---|---|
 | prefill / decode（§1.5） | 自回归生成（§1.3） | 一次一个词 → 前算过的想复用 |
 | KV cache（§2） | 自回归时每个位置算一次 K/V（§3.2） | 算过的 K/V 存起来，别重算 |

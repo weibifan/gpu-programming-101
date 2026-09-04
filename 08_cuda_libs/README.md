@@ -1,6 +1,6 @@
 # 08_cuda_libs — CUDA 类库案例
 
-配套文档：`docs/02_cuda_basics.md` §9.1（四大基础类库）、§9.2（与 PyTorch 的关系）。
+配套文档：`第3章 CUDA编程基础.md` §9.1（四大基础类库）、§9.2（与 PyTorch 的关系）。
 
 | 文件 | 类库 | 演示内容 |
 |---|---|---|
@@ -27,8 +27,8 @@ python 05_torch_backends.py
 
 ## 备注
 
-- 本机体检结果：系统级 `cudnn64.dll` 未安装，PyTorch 内置 cuDNN 90100 可用（见 01_environment.md）。
+- 本机体检结果：系统级 `cudnn64.dll` 未安装，PyTorch 内置 cuDNN 90100 可用（见 第2章 环境搭建.md）。
   所以 `04_cudnn_conv` 若要编译，需先装系统 cuDNN（https://developer.nvidia.com/cudnn，选与 CUDA 11.6 匹配的版本）；
   若只是用 PyTorch，则完全无需安装。
-- 矩阵乘 / 卷积等"重量算子"的性能王者是这些库（cuBLAS/cuDNN）。`code/04_optimization/` 手写内核是为了理解原理，
+- 矩阵乘 / 卷积等"重量算子"的性能王者是这些库（cuBLAS/cuDNN）。`04_optimization/` 手写内核是为了理解原理，
   生产环境直接用它们即可。

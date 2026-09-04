@@ -1,6 +1,6 @@
 # 05_llm — 大模型推理/训练加速（M5~M6）
 
-目标：把 `docs/05_llm_acceleration.md` 的核心优化逐个跑一遍：attention 三种写法、KV cache、量化、llama.cpp 部署。
+目标：把 `第6章 LLM加速.md` 的核心优化逐个跑一遍：attention 三种写法、KV cache、量化、llama.cpp 部署。
 
 | 文件 | 演示内容 | 对应文档 |
 |---|---|---|
@@ -30,6 +30,6 @@ bash 04_llama_cpp_deploy.sh
 
 ## 要点回顾
 
-* 解码阶段是 100% memory-bound（算术强度 ~1 FLOP/byte），所有加速都是"省字节/省重复搬"：KV cache 省重算、FlashAttention 省中间量、量化直接减字节（`docs/05 §1`）。
+* 解码阶段是 100% memory-bound（算术强度 ~1 FLOP/byte），所有加速都是"省字节/省重复搬"：KV cache 省重算、FlashAttention 省中间量、量化直接减字节（`第6章 LLM加速.md §1`）。
 * `F.scaled_dot_product_attention` 一行 = 手写 naive 的加速版，是 PyTorch 生态最大的变化之一。
-* 8G 显存能跑 7B 的秘密：FP16 权重 14GB 装不下，INT4 约 4GB 装得下（`docs/05 §4.4`）。
+* 8G 显存能跑 7B 的秘密：FP16 权重 14GB 装不下，INT4 约 4GB 装得下（`第6章 LLM加速.md §4.4`）。

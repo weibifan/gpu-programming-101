@@ -11,7 +11,7 @@
 
 ## 编译 / 运行
 
-先加载 MSVC 环境（否则 `nvcc` 找不到 `cl.exe`/头文件/库，见 `docs/01_environment.md` §3.3）：
+先加载 MSVC 环境（否则 `nvcc` 找不到 `cl.exe`/头文件/库，见 `第2章 环境搭建.md` §3.3）：
 
 ```powershell
 cmd /c "\"C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat\" && nvcc index_1d.cu -o index_1d.exe && .\index_1d.exe"
@@ -49,4 +49,4 @@ chcp 65001
 .\index_1d.exe
 ```
 
-对应文档：`docs/02_cuda_basics.md` §6.1 / §6.4。
+对应文档：`第3章 CUDA编程基础.md` §6.1 / §6.4。

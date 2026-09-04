@@ -1,18 +1,24 @@
-# 05 LLM 加速专题：Attention、量化、KV Cache 与推理引擎
+# 第6章 LLM加速：省显存、省带宽、捅破内存墙
 
-> 对应里程碑 M5～M6。前面的笔记都在讲"一块 GPU 怎么算得快"；本篇把镜头拉远：**跑一个大语言模型（LLM），瓶颈在哪？** 你会发现：LLM 推理慢，恰恰不是"算得慢"，而是"**数据搬得慢**"。学过 03_cuda_advanced.md 的 memory-bound / compute-bound 之后，你会看明白 FlashAttention、量化、KV cache、vLLM 这些"花活"，本质都在做同一件事——**省显存、省带宽、把内存墙捅破**。
+> 本文档把镜头从"一块 GPU 怎么算得快"拉远到"跑一个大语言模型（LLM），瓶颈在哪"。**适合已经学过 CUDA 基础（知道 memory-bound / compute-bound 是什么）、想搞懂 FlashAttention、量化、KV cache、llama.cpp / vLLM / TensorRT 这些加速名词背后原理的读者。** 用"内存墙"做主线，你会发现 LLM 推理慢，恰恰不是"算得慢"，而是"**数据搬得慢**"——所有加速手段都在做同一件事：省显存、省带宽、把内存墙捅破。
 
-**阅读路线**：先搞清 LLM 推理为什么"卡在内存上"（§1），再看三个核心优化：KV cache（§2）、FlashAttention（§3）、量化（§4），最后落到推理引擎 llama.cpp / vLLM / TensorRT（§5～§7）。读完你应能解释：为什么解码阶段快不起来？FlashAttention 到底省了什么？int4 量化为什么能提 4 倍速？vLLM 凭什么能服务很多用户？
+**本章结构**：第 1 节画"训练 vs 推理"的分工，推出推理为什么"卡在内存墙"，并拆出 prefill / decode 两个阶段；第 2 节讲 KV cache（省重算）；第 3 节讲 FlashAttention（省中间量）；第 4 节讲量化（省字节）；第 5 节落到开源引擎 llama.cpp；第 6 节讲 vLLM 与连续批处理（省闲置）；第 7 节讲 NVIDIA 闭源栈 TensorRT；第 8 节用一张全家桶表收尾；第 9 节给出与代码/实验的对应。
+
+**贯穿主线**：全篇回答一个问题——**为什么现在的 8G 小显卡也能流畅跑 7B 对话模型？** 答案不是算力变强了，而是每一步都在省显存、省带宽。读完你应能解释：为什么解码阶段快不起来？FlashAttention 到底省了什么？int4 量化为什么能提 4 倍速？vLLM 凭什么能服务很多用户？
+
+**开篇先立起本篇的主角概念——内存墙（memory wall）**。它与"维度灾难"同类，都是一旦吃透、后面一串技术就变成显然结论的奠基性概念：维度灾难宣判高维空间里朴素直觉失效，于是降维、稀疏化、近似检索成为必然；内存墙则宣告**"算"与"搬"的速度差在持续拉大**——芯片算力近乎指数增长，数据搬运速度（带宽）却步履蹒跚，迟早有一天（对 LLM 解码而言就是现在），决定性能的不是算得多快，而是数据喂得多快。为什么叫"墙"，而不是"瓶颈"或"灾难"？三个词分量不同：**瓶颈**是局部且可疏通的——拓宽一段、分流一波即可缓解，暗示工程修补终能解决；**灾难**是异常状态——意味着出错与崩溃，可撞上内存墙时系统一切正常运转，只是快不起来；**墙**是硬边界——由物理规律划定，不因代码优劣而移动，推不倒也绕不开，只能改变自身行为去适应：少搬数据、就近计算。"内存墙"一词出自 1995 年 Wulf 与 McKee 的论文《Hitting the Memory Wall》，三十年过去，处理器与内存的速度差距非但没有弥合，反而在拉大——这堵墙没变矮，还在逐年长高；GPU 上同理（A100→H100：FP16 算力约 ×3.2，HBM 带宽仅 ×1.6）。所以标题里那句"捅破内存墙"，真实含义不是拆墙，而是**少撞墙**——本篇所有加速手段，归根结底都在回答同一个问题：面对一堵推不倒的墙，如何少往墙上撞。这堵墙的具体形状，§1.4 会用一笔账量给你看。
 
 ---
 
-## 1. 从训练到推理：为什么推理"卡"在内存墙
+## 第 1 节 从训练到推理：为什么推理"卡"在内存墙
 
-> 本节用一条线串起来：先分清**训练和推理是两套完全不同的活**（§1.1），由此推出推理必须"换皮"、换专用引擎（§1.2）；再看训练完的模型怎么变成引擎能加载的文件——一次"换皮"流水线（§1.3）；然后钻进推理内部，看它为什么天生就慢——**自回归 × 算术强度太低 = 内存墙**（§1.4）；最后把推理拆成 prefill / decode 两个阶段，看后面的加速手段各自打哪个靶（§1.5）。
+> 本节用一条线串起来，回答五件事：训练和推理差在哪（§1.1）、推理为什么不用 PyTorch（§1.2）、训练产物怎么"换皮"给引擎（§1.3）、推理为什么天生慢（§1.4）、prefill 与 decode 各打哪个靶（§1.5）。看完你应该能在心里画出那张"分工 → 瓶颈 → 优化"的靶图。
 
 ### 1.1 训练 vs 推理：一个"算"，一个"搬"
 
-先分清两件完全不同的事：**训练（training）**是让模型学会参数（前向算损失 → 反向传梯度 → 更新权重）；**推理（inference）**是用训练好的参数去做预测（只做前向，读权重算输出）。二者用同一套网络结构、同一套算子，但**优化目标、瓶颈、硬件需求完全不同**——这是后面所有优化（量化、KV cache、推理引擎）的出发点。
+**一句话定义**：**训练（training）**是让模型学会参数（前向算损失 → 反向传梯度 → 更新权重）；**推理（inference）**是用训练好的参数去做预测（只做前向，读权重算输出）。二者用同一套网络结构、同一套算子，但**优化目标、瓶颈、硬件需求完全不同**——这是后面所有优化（量化、KV cache、推理引擎）的出发点。
+
+**一个类比**：把模型想成一把菜刀——**训练是"打刀"**（反复加热、捶打、淬火，一步步把铁打成好钢，一个人慢慢磨），**推理是"用刀"**（钢已打好，成百上千个厨师同时挥刀切菜）。打刀要的是耐心和高精度，用刀要的是快和稳。
 
 | 维度 | 训练 | 推理 |
 |---|---|---|
@@ -34,6 +40,8 @@
 
 ### 1.2 为什么推理不用 PyTorch：从训练栈切到部署栈
 
+**一句话定义**：**PyTorch 为"训练"设计（要灵活、能改梯度），推理引擎为"部署"设计（要省带宽、省显存、服务并发）**——换引擎不是"PyTorch 能不能干"，而是职责分工。
+
 既然训练和推理是两码事，那推理为什么不能顺手用训练时的 PyTorch 跑？PyTorch 当然能推理（`model.generate()` 一行即可），但它是为训练设计的，推理时暴露三个"错配"：
 
 | PyTorch 推理的痛点 | 专用引擎（llama.cpp / vLLM） |
@@ -43,9 +51,7 @@
 | 无并发调度，多用户只能串行排队、各自独占一大块显存 | Continuous Batching + PagedAttention，天生为多人并发（§6） |
 | 训练栈（自动微分、优化器、分布式）推理用不上却仍占资源 | 只保留纯前向的代码路径，轻到能跑 CPU/手机 |
 
-> **PyTorch 为"训练"设计（要灵活、能改梯度），推理引擎为"部署"设计（要省带宽、省显存、服务并发）。** 同样算一遍，专用引擎更省、更快、能服务更多人——所以推理要"换皮"，本质是**从训练栈切到部署栈**，不是"PyTorch 能不能干"，而是职责分工。
-
-换引擎不是魔法——引擎要能跑，得先有它能读的文件。训练产物具体怎么变成引擎可加载的格式，见 §1.3。
+> 同样算一遍，专用引擎更省、更快、能服务更多人——所以推理要"换皮"，本质是**从训练栈切到部署栈**。换引擎不是魔法——引擎要能跑，得先有它能读的文件。训练产物具体怎么变成引擎可加载的格式，见 §1.3。
 
 ### 1.3 从训练产物到引擎可加载：一次"换皮"流水线
 
@@ -53,13 +59,30 @@
 
 > ⚠️ 两个词别混：**"Transformer 架构"**是网络结构本身（注意力 + FFN + 残差那套）；**`transformers` 库**是 HF 提供的 Python 库（`AutoModel` 等类）。GPT、Llama、Qwen、nanochat 全都是 Transformer 架构；区别只在两点：**你用了没用 `transformers` 库**、**架构标不标准**。
 
-**记住一句话**：引擎要加载你的模型，得同时满足两点——① **知道怎么搭**（元数据：架构名/层数/head 数/激活函数…）② **会算这个架构**（引擎代码里有实现）。下面三条路线的差别，就是这两点谁帮你搞定、搞不定的部分你要补多少。
+**一句话定义（换皮流水线）**：引擎要加载你的模型，得同时满足两点——① **知道怎么搭**（元数据：架构名/层数/head 数/激活函数…）② **会算这个架构**（引擎代码里有实现）。下面三条路线的差别，就是这两点谁帮你搞定、搞不定的部分你要补多少。
+
+**颜色约定（本节流程沿用）**：**<span style="color:#e65100">🟠 训练产物</span> → <span style="color:#c62828">🔴 标准中间格式</span> → <span style="color:#6a1b9a">🟣 引擎专属格式</span> → <span style="color:#2e7d32">🟢 引擎加载</span>**
+
+```mermaid
+flowchart LR
+    T["🟠 训练产物<br/>model.pt / HF 目录"]
+    M["🔴 标准中间格式<br/>config.json + safetensors"]
+    E["🟣 引擎专属格式<br/>GGUF / .plan"]
+    R["🟢 引擎加载<br/>llama.cpp / vLLM / TensorRT"]
+    T --> M --> E --> R
+    style T fill:#fff3e0,stroke:#e65100
+    style M fill:#ffebee,stroke:#c62828
+    style E fill:#f3e5f5,stroke:#6a1b9a
+    style R fill:#e8f5e9,stroke:#2e7d32
+```
 
 按"你当初怎么写代码"分成三条路线：
 
-#### 路线一：全程用 `transformers` 库建模 —— 什么都不用补
+#### 路线一：通过 `transformers` 库构建"标准模型" —— 什么都不用补
 
-**场景**：你直接用 `transformers` 库的 `AutoModelForCausalLM` 等类建模型、训练。
+**标准模型：**推理引擎注册表里面的模型
+
+**场景**：你直接用 `transformers` 库的 `Qwen3ForCausalLM` 等类建模型、训练。
 
 **保存命令**：
 
@@ -89,11 +112,11 @@ python convert_hf_to_gguf.py ./my_model/ --outfile my_model.gguf
 ./build/bin/llama-cli -m my_model-Q4_K_M.gguf -p "hello" -n 64
 ```
 
-> 前提：架构主流（llama、qwen 这类引擎认识的）。只要引擎认识，config 里写个架构名，它就知道怎么搭、怎么算。
+> 补充说明：Transformes支持qwen3，Llam3，Gemma4等主流模型。此时config 里写个架构名，它就知道怎么搭、怎么算。
 
-#### 路线二：手写"标准" Transformer 结构 —— 补一份 config 就行
+#### 路线二：手写"标准模型" —— 补一份 config 就行
 
-**场景**：你没用 `transformers` 库，自己写 `nn.Module` 搭了一个**标准** Transformer（如照 Llama 结构搭），训完 `torch.save` 存成 `model.pt`。
+**场景**：你没用 `transformers` 库，自己写 `nn.Module` 搭了一个**标准模型**（如照 Llama 结构搭），训完 `torch.save` 存成 `model.pt`。
 
 **保存命令**：
 
@@ -126,7 +149,7 @@ save_file(sd, "model.safetensors")
 
 #### 路线三：nanochat 这类"非标准"结构 —— 转换脚本和引擎实现都得自己弄
 
-**场景**：你魔改了 Transformer（如 nanochat 的 ReLU² FFN），引擎不认识这个架构。
+**场景**：你魔改了Gemma4（如 nanochat 的 ReLU² FFN），引擎不认识这个架构。与是否使用transformers库无关。
 
 **保存结果**（nanochat 的 checkpoint 目录）：
 
@@ -169,7 +192,7 @@ python convert_nanochat_to_gguf.py --src /path/to/checkpoint --out model.gguf   
 
 ### 1.4 推理为什么慢：自回归 × 内存墙
 
-**先看推理是怎么生成的：一次只吐一个 token。** LLM（如 GPT 系列）是**自回归（autoregressive）**模型：生成时每步只产出一个 token，再把新 token 接回输入继续预测下一个。
+**一句话定义**：LLM（如 GPT 系列）是**自回归（autoregressive）**模型——生成时每步只产出一个 token，再把新 token 接回输入继续预测下一个。**先看推理是怎么生成的：一次只吐一个 token。**
 
 ```
 输入: [今天天气]
@@ -189,7 +212,7 @@ python convert_nanochat_to_gguf.py --src /path/to/checkpoint --out model.gguf   
 算术强度 = 14 GFLOP / 14 GB ≈ 1 FLOP/byte  ← 非常低！
 ```
 
-对比 03_cuda_advanced.md 的结论：算力 8.9 TFLOPS、带宽 320 GB/s 的 GTX 1080，**喂满算力需要 8.9T/320G ≈ 27 FLOP/byte**。而 7B 解码只有 1 FLOP/byte——
+**一个类比（算术强度）**：算术强度就是"每次搬来一个字节，能顺便做几次运算"。算力 8.9 TFLOPS、带宽 320 GB/s 的 GTX 1080，**喂满算力需要 $8.9\mathrm{T}/320\mathrm{G} \approx 27\ \mathrm{FLOP/byte}$**。就像"快递员力气很大，但只有一辆小三轮"——一趟只能拉那么点货（带宽），再多力气（算力）也闲置。而 7B 解码只有 1 FLOP/byte——
 
 ```
 搬 14 GB 数据所需时间 = 14 GB / 320 GB/s ≈ 44 ms
@@ -198,48 +221,81 @@ python convert_nanochat_to_gguf.py --src /path/to/checkpoint --out model.gguf   
 → 27 倍的时间都花在"搬权重"，GPU 算力闲置
 ```
 
+把这笔账画成 decode 单步的时序图，"搬"与"算"的时间悬殊一目了然：
+
+```mermaid
+sequenceDiagram
+    participant C as GPU 计算单元（8.9 TFLOPS）
+    participant M as 显存 HBM（320 GB/s）
+    Note over C,M: decode 第 t 步：为了预测 1 个 token
+    C->>M: ① 请求读全部权重（14 GB）
+    Note over C: ⏳ 算力空转，等数据……
+    M-->>C: ② 权重搬运完成（≈ 44 ms，大头）
+    C->>C: ③ 就地计算 14 GFLOP（≈ 1.6 ms）
+    C-->>C: ④ 吐出 1 个 token
+    Note over C,M: 第 t+1 步：整条时序原样重演一遍
+```
+
+> **memory-bound = 性能的上限由"搬数据的速度"决定，而不是"算的速度"。**
+> 图上长长的一段是"搬"，短短一段才是"算"——总时长被长的那段钉死；想让解码变快，只能缩短"搬"。
+
 > **这就是 LLM 推理慢的根本原因：解码阶段是 100% memory-bound——卡的不是算力，而是搬数据的速度（"内存墙"）。** 所以所有加速手段都围绕一个字：**省**——省字节数（量化，§4）、省重复搬（KV cache，§2）、省中间量（FlashAttention，§3）、省浪费（batch 起来算，§6）。
 
 ### 1.5 prefill 与 decode：瓶颈不同，优化分工不同
 
-"内存墙"并非在整个推理中均匀存在——它主要卡在**生成阶段**。把一次推理按"是否在生成 token"拆成两段，瓶颈就分开了：
+**一句话定义**："内存墙"并非在整个推理中均匀存在——它主要卡在**生成阶段**。把一次推理按"是否在生成 token"拆成两段，瓶颈就分开了：
 
 | 阶段 | 干什么 | 瓶颈 | 特点 |
 |---|---|---|---|
 | **prefill**（预填充） | 一次性处理整个输入 prompt，并行算出每个位置的注意力 | compute-bound | 短促但计算密集，能喂满算力 |
 | **decode**（解码） | 逐个生成 token | **memory-bound** | 长而慢，几乎全靠带宽 |
 
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant M as LLM
+    U->>M: 输入整个 prompt
+    Note over M: prefill：一次性算完<br/>compute-bound，短促密集
+    loop 逐个 token 生成
+        M->>M: decode：每步读全部权重<br/>memory-bound，长而慢
+        M-->>U: 吐出一个 token
+    end
+```
+
 > 优化的对象因此不同：**prefill 靠 FlashAttention 提速（§3），decode 靠 KV cache（§2）+ 量化（§4）+ 连续批处理（§6）提速**。§2～§6 的全部内容，就是按这张分工表逐项展开。
 
 ---
 
-## 2. KV Cache：把算过的注意力中间量存起来
+## 第 2 节 KV Cache：把算过的注意力中间量存起来
+
+> 本节回答三件事：为什么需要 KV cache、它占多大显存、prefill 和 decode 阶段 KV 怎么流动。
 
 ### 2.1 为什么需要它
 
-标准 attention（03 篇没有直接讲，这里展开）：
+**一句话定义**：KV cache 就是"第一次见到某 token 时，算出它的 K、V，**存在显存里**，之后每一步直接拿来用，不再重算"——把历史注意力中间量存起来，用显存换计算。
 
-```
-Q = X @ Wq      K = X @ Wk      V = X @ Wv      （X 是每层的输入，W 是权重）
-Attention = softmax(Q @ K^T / √d) @ V
-```
+先看标准 attention 的公式（之前没有直接讲，这里展开）：
+
+$Q = X @ W_q$，$K = X @ W_k$，$V = X @ W_v$ （$X$ 是每层的输入，$W$ 是权重）
+
+$$Attention = \mathrm{softmax}(Q @ K^T / \sqrt{d}) @ V$$
 
 每一层都会为**每个历史 token** 算出一组 K 和 V。自回归解码时，第 t 步只需要**新 token 自己的 Q**，但 attention 还要跟**前面所有 token 的 K、V** 做计算。
 
 **如果每步都重新算前面的 K、V**（因为它们依赖历史输入），那计算量随序列长度平方增长——序列长 1000，第 1000 步要白算 1000 遍前面的东西。
-
-**KV cache 的做法**：第一次见到某 token 时，算出它的 K、V，**存在显存里**，之后每一步直接拿来用，不再重算。
 
 ```
 无 KV cache：每步重算全部历史 K、V     → O(T²) 计算
 有 KV cache：每步只算新 token 的 K、V → O(T) 计算，历史直接读缓存
 ```
 
+**一个类比**：把 K、V 想成"会议纪要"。没有 KV cache，每开一次会（生成一个 token），都要把过去的每一场会重新开一遍、重新做一遍纪要；有了 KV cache，纪要第一次做完就存档，之后每开新会，只需要补记这一场的新内容。
+
 ### 2.2 KV cache 有多大？（显存开销）
 
-```
-KV cache 大小 = 2（K 和 V）× 层数 × 每层 head 数 × head 维度 × 序列长度 × 每元素字节
+$$KV\ cache\ 大小 = 2(K,V) \times 层数 \times 每层head数 \times head维度 \times 序列长度 \times 每元素字节$$
 
+```
 例：7B 模型（32 层，32 head，head 维度 128，即每层 32×128=4096 维），FP16：
   每个 token = 2 × 32 × 4096 × 2 字节 = 512 KB
   序列长度 2048 → 约 1 GB；长度 8192 → 约 4 GB
@@ -254,18 +310,39 @@ KV cache 大小 = 2（K 和 V）× 层数 × 每层 head 数 × head 维度 × �
 
 ### 2.3 prefill vs decode 的 KV 流动
 
+**一句话定义**：prefill 把整个 prompt 的 KV 一次性算好写入 cache；decode 每步只算新 token 的 K、V，追加进 cache，再用全 cache 做 attention。
+
 ```
 prefill 阶段：整个 prompt 的 KV 全部算好 → 写入 KV cache
 decode 阶段：每步只算新 token 的 K、V → 追加到 cache → 用全 cache 做 attention
 ```
 
-`code/05_llm/` 里会写一个"无 cache vs 有 cache"的对比实验，直接测 decode 延迟的差距。
+```mermaid
+flowchart LR
+    P["🟢 prefill<br/>整个 prompt 的 KV 一次算完"]
+    C["📦 KV cache<br/>历史 K、V 都存这里"]
+    D["🟠 decode<br/>每步只算新 token 的 K、V"]
+    A["⚙️ attention<br/>新 Q × 全部 K、V"]
+    P --> C
+    D --> C
+    C --> A
+    style P fill:#e8f5e9,stroke:#2e7d32
+    style C fill:#fff3e0,stroke:#f57c00
+    style D fill:#fff3e0,stroke:#e65100
+    style A fill:#e1f5fe,stroke:#1565c0
+```
+
+`05_llm/` 里会写一个"无 cache vs 有 cache"的对比实验，直接测 decode 延迟的差距。
 
 ---
 
-## 3. FlashAttention：把"省"做到算子和显存层面
+## 第 3 节 FlashAttention：把"省"做到算子和显存层面
+
+> 本节回答四件事：标准 Attention 的中间量 S 有多大、FlashAttention 怎么省、三代演进各自快在哪、三种写法怎么选。
 
 ### 3.1 标准 Attention 的问题：中间量 S 太大
+
+**一句话定义**：标准实现里 `S = Q @ K^T` 和 `P = softmax(S)` 都是 $[T, T]$ 形状的大矩阵，每个位置都要存，长序列下显存根本放不下，还要反复写回/读回全局内存。
 
 标准实现（PyTorch 里 `x @ y` 那种）：
 
@@ -282,21 +359,24 @@ O = P @ V            # 结果 [T, d]
 1. `S` 和 `P` 都要**写回全局内存再读回来**，带宽浪费巨大
 2. 显存里**放不下**长序列的 S 矩阵，只能退化成小 batch
 
-### 3.2 FlashAttention 的思路：03 篇的 tiling 换了个马甲
+### 3.2 FlashAttention 的思路：把数据分块（tile）搬进共享内存
 
-> 03_cuda_advanced.md §10.2 我们刚学过：**把数据分块（tile）搬进共享内存，不写回全局内存，就地算完**。FlashAttention 就是把这个套路用在 attention 上——所以它叫 **IO-aware attention（感知输入输出的注意力）**。
+**一句话定义**：FlashAttention 是一种 **IO-aware attention（感知输入输出的注意力）**——把数据分块（tile）搬进共享内存/寄存器，用"在线 softmax"（online softmax）边算边累计正确的归一化，让中间量 S、P 从不出共享内存，从而把全局内存读写从 $O(T²)$ 降到 $O(T)$。
+
+> 前面我们已经学过：**把数据分块（tile）搬进共享内存，不写回全局内存，就地算完**。FlashAttention 就是把这个套路用在 attention 上——所以它叫 **IO-aware attention（感知输入输出的注意力）**。
+
+**分四步**：
+
+1. **<span style="color:#e65100">🟠 分块</span>**：把 Q、K、V 分块，一块块搬进共享内存/寄存器
+2. **<span style="color:#c62828">🔴 局部计算</span>**：对每块算局部 S 块、softmax 块、V 乘
+3. **<span style="color:#6a1b9a">🟣 在线修正</span>**：用一个"在线 softmax"技巧（online softmax），边算边累计正确的归一化，不需要先把整个 S 存下来
+4. **<span style="color:#2e7d32">🟢 全程不出共享内存</span>**：S、P 从不出共享内存 → 全局内存读写降到接近"只读 Q/K/V 各一遍"
 
 ```
-1. 把 Q、K、V 分块，一块块搬进共享内存/寄存器
-2. 对每块算局部 S 块、softmax 块、V 乘
-3. 用一个"在线 softmax"技巧（online softmax），
-   边算边累计正确的归一化，不需要先把整个 S 存下来
-4. 全程 S、P 从不出共享内存 → 全局内存读写降到接近"只读 Q/K/V 各一遍"
-
 效果：全局内存读写从 O(T²) 降到 O(T) → prefill 速度提升 2～4 倍
 ```
 
-**关键点**：FlashAttention 不是改变数学，是**改变数据流动的位置**——中间量不再经过慢速的全局内存。这正是 03 篇"内存感知优化"的极致版。
+**关键点**：FlashAttention 不是改变数学，是**改变数据流动的位置**——中间量不再经过慢速的全局内存。这正是"内存感知优化"的极致版。
 
 ### 3.3 三代演进
 
@@ -306,7 +386,7 @@ O = P @ V            # 结果 [T, d]
 | FA2（2023） | 并行策略、寄存器优化、减少非矩阵运算 | 再快 ～2×，decode 也受益 |
 | FA3（2024+） | 深度绑定 Hopper/Blackwell，用 Tensor Core | 大模型吞吐再升 |
 
-### 3.4 三种写法的对照（实践在 code/05_llm/）
+### 3.4 三种写法的对照（实践在 05_llm/）
 
 ```python
 # 写法 1：手写 naive（教学用，别在生产跑）
@@ -323,15 +403,19 @@ O = F.scaled_dot_product_attention(Q, K, V)
 # 写法 3：显式调 FlashAttention（fa2/fa3 库，M6 在 A100/4090D 上实测）
 ```
 
-> 2022 年手写 attention（旧仓库 `ex31` 的写法）→ 2026 年 `F.scaled_dot_product_attention` 一行搞定且自动加速，是 PyTorch 生态最大的变化之一（详见 04_pytorch_gpu.md）。
+> 2022 年手写 attention（旧仓库 `ex31` 的写法）→ 2026 年 `F.scaled_dot_product_attention` 一行搞定且自动加速，是 PyTorch 生态最大的变化之一。
 
 ---
 
-## 4. 量化：压缩字节，直接打带宽
+## 第 4 节 量化：压缩字节，直接打带宽
+
+> 本节回答四件事：为什么量化对 LLM 特别有效、各精度的字节数与代价、PTQ / QAT / QLoRA 三种方法、实测心里预期。
 
 ### 4.1 为什么量化对 LLM 特别有效
 
-03 篇 §9 说 memory-bound 的内核优化重点就是**减字节数**。LLM 解码正好是 memory-bound——把每个权重从 FP16（2 字节）压到 INT4（0.5 字节），**搬运量直接省 4 倍**，解码速度理论上接近 4 倍。同时显存占用也省 4 倍，模型"装得下"。
+**一句话定义**：量化就是"把每个权重用更少的字节表示"。memory-bound 的内核优化重点就是**减字节数**；LLM 解码正好是 memory-bound——把每个权重从 FP16（2 字节）压到 INT4（0.5 字节），**搬运量直接省 4 倍**，解码速度理论上接近 4 倍。同时显存占用也省 4 倍，模型"装得下"。
+
+**一个类比**：量化好比"把行李里的每件衣服都抽成真空压缩袋"。FP16 是普通装箱，INT8 是半压缩，INT4 是强力压缩——行李箱（显存）同样大小，压缩后能装更多东西（模型放得下），搬行李（搬数据）也更快。
 
 ### 4.2 精度与代价
 
@@ -344,6 +428,8 @@ O = F.scaled_dot_product_attention(Q, K, V)
 | INT4 + 更小 | <0.5 | >4× | 花活多，掉点渐大 |
 
 ### 4.3 量化方法：先训后量化（PTQ）vs 微调（QAT）
+
+**一句话定义**：PTQ 是"权重训好了，直接按统计信息压成低精度"（主流）；QAT 是"训练时就把量化误差算进去"（更稳但成本高，少用）；QLoRA 是"4bit 加载模型 + LoRA 微调"（8G 显存能训 7B）。
 
 ```
 PTQ（训练后量化，主流）：
@@ -369,15 +455,25 @@ QLoRA（微调时的量化）：4bit 加载模型 + LoRA 微调，8G 显存能�
 
 ---
 
-## 5. 推理引擎之一：llama.cpp
+## 第 5 节 推理引擎之一：llama.cpp
+
+> 本节回答四件事：为什么选 llama.cpp、基本用法、测速指标、以及 Ollama 和它是什么关系。
 
 ### 5.1 为什么选它
+
+**一句话定义**：llama.cpp 是一个**单文件、零依赖**、CPU/GPU 都能跑、量化支持最成熟的 C++ 推理引擎；配套的 **GGUF 格式**一站式解决"量化权重 + 元数据 + KV cache 配置"。
 
 - **单文件、零依赖**，CPU/GPU 都能跑，量化支持最成熟
 - GGUF 格式一站式（量化权重 + 元数据 + KV cache 配置）
 - 8G 显存也能本地跑 7B int4（M6 目标）
 
-### 5.2 基本用法（code/05_llm/ 会给出具体脚本）
+### 5.2 基本用法（05_llm/ 会给出具体脚本）
+
+**三步走**：
+
+1. **<span style="color:#e65100">🟠 下载权重</span>**：下载 int4 GGUF 权重（如 Qwen2-7B-Instruct-Q4_K_M.gguf）
+2. **<span style="color:#c62828">🔴 编译</span>**：带 CUDA 后端编译
+3. **<span style="color:#2e7d32">🟢 开跑</span>**：指定 GPU 层数跑起来
 
 ```bash
 # 1. 下载 int4 GGUF 权重（如 Qwen2-7B-Instruct-Q4_K_M.gguf）
@@ -398,17 +494,20 @@ llama.cpp 会打印 **decode speed**（如 `32 tokens/s`）。拿它做量化、
 
 ### 5.4 Ollama：llama.cpp 的"易用外壳"
 
-如果你觉得"下载 GGUF → cmake 编译 → 调 `-ngl`"太折腾，可以用 **Ollama**。它不改变底层：**Ollama 的推理引擎就是 llama.cpp（ggml 后端）**，只是把它包装成开箱即用的产品。
+**一句话定义**：Ollama 不改变底层——**Ollama 的推理引擎就是 llama.cpp（ggml 后端）**，只是把它包装成开箱即用的产品。
 
-```
-llama.cpp（引擎：加载 GGUF、量化、CPU/GPU 推理）
-     ↑
-Ollama（外壳：模型仓库、一键安装、HTTP API、自动 GPU 检测）
-     ↑
-你（只敲 ollama run 就行）
-```
+**一个类比**：**llama.cpp 是"零件"，Ollama 是"整车"**——就像 Linux 内核之于发行版，或 Homebrew 之于 macOS 底层工具。
 
-两者关系一句话：**llama.cpp 是"零件"，Ollama 是"整车"**——就像 Linux 内核之于发行版，或 Homebrew 之于 macOS 底层工具。
+```mermaid
+flowchart LR
+    Y["🙋 你<br/>只敲 ollama run 就行"]
+    O["🚀 Ollama<br/>外壳：模型仓库、一键安装、HTTP API、自动 GPU 检测"]
+    L["⚙️ llama.cpp<br/>引擎：加载 GGUF、量化、CPU/GPU 推理"]
+    Y --> O --> L
+    style Y fill:#e8f5e9,stroke:#2e7d32
+    style O fill:#e1f5fe,stroke:#1565c0
+    style L fill:#f3e5f5,stroke:#6a1b9a
+```
 
 ```bash
 # Ollama 用法：不用编译、不用手动找权重
@@ -417,19 +516,25 @@ ollama run qwen2:7b "讲一个 GPU 编程的故事"
 curl http://localhost:11434/api/generate -d '{"model":"qwen2:7b","prompt":"hi"}'
 ```
 
-**与本篇的衔接**：Ollama 默认也是量化路线（7B 模型默认 int4 档），显存装不下时同样会分层 offload 到 CPU——只是这些细节被藏起来了。调试底层行为时仍要回到 llama.cpp / GGUF 本身；§5.2 的 `-ngl`、`-t` 参数在 `ollama` 里对应 `num_gpu`、`num_thread` 等环境变量。
+**与本章的衔接**：Ollama 默认也是量化路线（7B 模型默认 int4 档），显存装不下时同样会分层 offload 到 CPU——只是这些细节被藏起来了。调试底层行为时仍要回到 llama.cpp / GGUF 本身；§5.2 的 `-ngl`、`-t` 参数在 `ollama` 里对应 `num_gpu`、`num_thread` 等环境变量。
 
 ---
 
-## 6. 推理引擎之二：vLLM 与"连续批处理"
+## 第 6 节 推理引擎之二：vLLM 与"连续批处理"
+
+> 本节回答四件事：单个 decode 为什么浪费、vLLM 的两个核心创新是什么、什么时候用哪个引擎、模型侧的 GQA/MQA 怎么省。
 
 ### 6.1 为什么单个 decode 这么浪费
 
-decode 阶段算力闲置（§1.4），但一个用户独占整块 GPU 显然浪费。直觉：**同时塞多个用户的请求，batch 起来算**，把算力喂满。
+**一句话定义**：decode 阶段算力闲置（§1.4），但一个用户独占整块 GPU 显然浪费——直觉是**同时塞多个用户的请求，batch 起来算**，把算力喂满。
 
 但普通 batch 有个致命伤：**每个请求长度不同，快的要等慢的**（padding 浪费），而且 KV cache 每请求独占一大块。
 
+**一个类比**：普通 batch 就像火车站的"整点发车"——必须等所有人到齐、统一发车，还得按最慢的乘客（最长请求）等；先到的乘客（短的请求）只能干等，座位（算力）白白空着。
+
 ### 6.2 vLLM 的两个核心创新
+
+**一句话定义**：vLLM 用 **Continuous Batching**（连续批处理 / 动态批处理）让完成的请求立刻腾出位置、新请求立刻插进来，GPU 始终有活干；用 **PagedAttention**（分页注意力）把 KV cache 切成固定大小的"页"，像操作系统虚拟内存一样按需分配。
 
 ```
 1. Continuous Batching（连续批处理 / 动态批处理）：
@@ -460,33 +565,46 @@ decode 阶段算力闲置（§1.4），但一个用户独占整块 GPU 显然浪
 
 ---
 
-## 7. 推理引擎之三：TensorRT —— NVIDIA 的"专属加速包"
+## 第 7 节 推理引擎之三：TensorRT —— NVIDIA 的"专属加速包"
 
-> 前面两节（§5～§6）讲的是开源推理引擎（llama.cpp / vLLM）。本节补上 NVIDIA 自家闭源生态的重器 **TensorRT**。它和前面讲过的概念高度呼应：**层融合 = 04 篇 §5 torch.compile 的算子融合、精度优化 = §4 的量化、离线编译 = 02 篇 §7.4 的 AOT**——看懂前面的内容，TensorRT 就没有新东西。
+> 本节回答四件事：TensorRT 是什么、四个核心优化对应仓库里哪些招、工作流怎么走、以及 llama.cpp / vLLM / TensorRT 三选一怎么选。它和前面讲过的概念高度呼应：**层融合 = torch.compile 的算子融合、精度优化 = 量化的推理侧工程化、离线编译 = AOT 编译**——看懂前面的内容，TensorRT 就没有新东西。
 
 ### 7.1 它是什么：不是库，是"专属编译器"
 
-**TensorRT** 是 NVIDIA 的**推理专用优化器 + 运行时**（不做训练）。它不是"一堆函数库"，而更像一个**编译器**：把你训练好的模型离线编译成**专属引擎文件（.plan / .engine）**，部署时直接加载做推理。
+**一句话定义**：**TensorRT** 是 NVIDIA 的**推理专用优化器 + 运行时**（不做训练）——它不是"一堆函数库"，而更像一个**编译器**：把你训练好的模型离线编译成**专属引擎文件（.plan / .engine）**，部署时直接加载做推理。
 
-> 对比着记（呼应 02 篇 §7.4）：**cuDNN 是"通用算子库"**（对任何模型都好用），**TensorRT 是"针对你这一个模型编译出来的专属加速包"**——它牺牲通用性，换来对单个模型更狠的优化。定位上 ≈ Java 平台的 GraalVM native-image（离线编译、绑定平台）。
+> 对比着记：**cuDNN 是"通用算子库"**（对任何模型都好用），**TensorRT 是"针对你这一个模型编译出来的专属加速包"**——它牺牲通用性，换来对单个模型更狠的优化。定位上 ≈ Java 平台的 GraalVM native-image（离线编译、绑定平台）。
 
 ### 7.2 四个核心优化：全是学过的套路
 
 TensorRT 在**构建阶段（Build）**对模型做四件事：
 
-| 优化 | 干什么 | 对应仓库哪招 |
+| 优化 | 干什么 | 对应哪招 |
 |---|---|---|
-| **层融合（Layer Fusion）** | 连续小算子合成一个大 kernel，省 kernel launch 和显存读写 | torch.compile（04 篇 §5）/ FlashAttention（§3）同款思路 |
+| **层融合（Layer Fusion）** | 连续小算子合成一个大 kernel，省 kernel launch 和显存读写 | torch.compile / FlashAttention（§3）同款思路 |
 | **精度优化** | 构建时降到 FP16 / INT8（PTQ 校准），字节数直接省 | §4 量化的推理侧工程化版本 |
-| **Kernel 自动调优** | 在**目标 GPU 上实测**数百种实现，选最快的组合 | 03 篇"填满屋顶区" |
-| **内存规划** | 生命周期不重叠的张量共享显存、预分配 workspace | 03 篇"省显存"的全局版 |
+| **Kernel 自动调优** | 在**目标 GPU 上实测**数百种实现，选最快的组合 | "填满屋顶区"的实操 |
+| **内存规划** | 生命周期不重叠的张量共享显存、预分配 workspace | "省显存"的全局版 |
 
 > 与 torch.compile 的区别：torch.compile 是**运行时 JIT**（首次调用现编）；TensorRT 是**离线 AOT**（部署前编好）——所以它构建慢（数分钟~数十分钟）、推理时零编译开销；也正因绑定目标 GPU 实测，`.plan` 文件**不可跨 GPU 架构迁移**（A100 编的不能在 H100 用）。
 
 ### 7.3 工作流：和 §1.3 的"换皮"同一个套路
 
-```
-PyTorch → torch.onnx.export → ONNX → trtexec → .plan → 运行时加载
+**一句话定义**：TensorRT 的工作流是 `PyTorch → ONNX → .plan → 运行时加载`，与 GGUF 流水线是同一个"换皮"套路——训练产物 → 标准中间格式 → 引擎专属格式。
+
+```mermaid
+flowchart LR
+    P["🟠 PyTorch 模型"]
+    O["🔴 ONNX 标准中间格式"]
+    PL["🟣 .plan 引擎专属格式"]
+    R["🟢 运行时加载推理"]
+    P -->|torch.onnx.export| O
+    O -->|trtexec| PL
+    PL --> R
+    style P fill:#fff3e0,stroke:#e65100
+    style O fill:#ffebee,stroke:#c62828
+    style PL fill:#f3e5f5,stroke:#6a1b9a
+    style R fill:#e8f5e9,stroke:#2e7d32
 ```
 
 ```bash
@@ -527,11 +645,13 @@ trtexec --onnx=model.onnx --saveEngine=model_int8.plan --int8 --calib=calibratio
 4. **版本敏感**：TensorRT / CUDA / cuDNN / 驱动版本必须严格匹配
 5. **核心闭源**：遇 Bug 只能等官方修复
 
-> 这也是本仓库 M5/M6 选 **llama.cpp / vLLM** 而非 TensorRT 的原因：开源、跨平台、教程多、8G 小卡可跑；TensorRT 留给 NVIDIA 生产栈（02 §7.4 已讲它"连 PTX 都砍掉、直接绑定架构"）。
+> 这也是本仓库 M5/M6 选 **llama.cpp / vLLM** 而非 TensorRT 的原因：开源、跨平台、教程多、8G 小卡可跑；TensorRT 留给 NVIDIA 生产栈（它"连 PTX 都砍掉、直接绑定架构"）。
 
 ---
 
-## 8. 一张图：LLM 加速全家桶
+## 第 8 节 一张图：LLM 加速全家桶
+
+> 本节把前面所有加速手段收进一张表，回答"每一步都在省什么"。看到瓶颈，就顺藤摸瓜找到对应的加速手段和章节。
 
 ```
 瓶颈           加速手段                原理               章节
@@ -548,15 +668,15 @@ N 卡生产部署          → TensorRT-LLM   离线 AOT：融合+量化+内存 
 
 ---
 
-## 9. 本篇与代码/实验的对应
+## 第 9 节 本篇与代码/实验的对应
+
+> 一张表带走：每个概念对应仓库里的哪个实验/文件，忘了去哪跑先来这里翻。
 
 | 概念 | 对应实验/文件 |
 |---|---|
-| attention 三种写法 | `code/05_llm/`（manual → F.sdpa → FlashAttention） |
-| KV cache 有/无对比 | `code/05_llm/`（decode 延迟实测） |
-| 量化 | `code/05_llm/`（GGUF 各档位困惑度/速度对比） |
-| llama.cpp 部署 7B int4 | `code/05_llm/` + M6 云端实测 |
+| attention 三种写法 | `05_llm/`（manual → F.sdpa → FlashAttention） |
+| KV cache 有/无对比 | `05_llm/`（decode 延迟实测） |
+| 量化 | `05_llm/`（GGUF 各档位困惑度/速度对比） |
+| llama.cpp 部署 7B int4 | `05_llm/` + M6 云端实测 |
 | vLLM 吞吐测试 | M6 在 AutoDL A100/4090D |
-| 手写内核思路 | `code/06_dsl_kernels/`（Triton 写 SGEMM / FlashAttention，语法见 `docs/06_dsl_kernels.md`） |
-
-> 下一篇 04_pytorch_gpu.md 回到 PyTorch 应用层——你会看到，前面学的这些 CUDA 概念，在 PyTorch 里不过是 `.to('cuda')` 一行而已，但懂了底层，才懂得它背后发生了什么。
+| 手写内核思路 | `06_dsl_kernels/`（Triton 写 SGEMM / FlashAttention，语法讲解放 Python 内核专题） |
